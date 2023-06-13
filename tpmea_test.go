@@ -22,22 +22,51 @@ func TestReadPCRs(t *testing.T) {
 	}
 }
 
-//func TestPCRReset(t *testing.T) {
-//	err := ResetPCR(16)
-//	if err != nil {
-//		t.Errorf("Expected no error, got %v", err)
-//	}
+func TestPCRReset(t *testing.T) {
+	err := ExtendPCR(16, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
 
-//	pcrs, err := ReadPCRs([]int{0}, AlgoSHA256)
-//	byes
+	err = ResetPCR(16)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
 
-//func TestPCRExtend(t *testing.T) {
-//	pcrs, err := ReadPCRs([]int{0}, AlgoSHA256)
-//	if err != nil {
-//		t.Errorf("Expected no error, got %v", err)
-//	}
+	afterResetPcrs, err := ReadPCRs([]int{16}, AlgoSHA256)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
 
-//}
+	after := afterResetPcrs.Pcrs[0].Digest
+	reset := make([]byte, 32)
+	if bytes.Equal(after, reset) != true {
+		t.Errorf("Expected equal PCR values, got %x != %x", after, reset)
+	}
+}
+
+func TestPCRExtend(t *testing.T) {
+	beforeExtendPcrs, err := ReadPCRs([]int{16}, AlgoSHA256)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	err = ExtendPCR(16, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	afterExtendPcrs, err := ReadPCRs([]int{16}, AlgoSHA256)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	before := beforeExtendPcrs.Pcrs[0].Digest
+	after := afterExtendPcrs.Pcrs[0].Digest
+	if bytes.Equal(before, after) {
+		t.Errorf("Expected diffrent PCR values, got %x = %x", before, after)
+	}
+}
 
 func TestSimpleSealUnseal(t *testing.T) {
 	key, _ := GenKeyPair()
