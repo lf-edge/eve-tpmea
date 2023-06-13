@@ -48,6 +48,52 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
+func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int) (tpm2.SessionContext, error) {
+
+	// null-hierarchy won't produce a valid ticket, go with owner
+	public := newExternalRSAPub(&key)
+	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleOwner)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.FlushContext(keyCtx)
+
+	approvedPolicyAuthDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPolicy, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	signature := tpm2.Signature{
+		SigAlg: tpm2.SigSchemeAlgRSASSA,
+		Signature: &tpm2.SignatureU{
+			RSASSA: &tpm2.SignatureRSASSA{
+				Hash: tpm2.HashAlgorithmSHA256,
+				Sig:  approvedPolicySignature}}}
+
+	ticket, err := tpm.VerifySignature(keyCtx, approvedPolicyAuthDigest, &signature)
+	if err != nil {
+		return nil, err
+	}
+
+	polss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
+	if err != nil {
+		return nil, err
+	}
+
+	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
+	err = tpm.PolicyPCR(polss, nil, pcrSelections)
+	if err != nil {
+		return nil, err
+	}
+
+	err = tpm.PolicyAuthorize(polss, approvedPolicy, nil, keyCtx.Name(), ticket)
+	if err != nil {
+		return nil, err
+	}
+
+	return polss, nil
+}
+
 func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err error) {
 	privPem := pem.EncodeToMemory(
 		&pem.Block{
@@ -215,47 +261,11 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 		return err
 	}
 
-	// null-hierarchy won't produce a valid ticket, go with owner.
-	public := newExternalRSAPub(&key)
-	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleOwner)
-	if err != nil {
-		return err
-	}
-	defer tpm.FlushContext(keyCtx)
-
-	approvedPolicyAuthDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPolicy, nil)
-	if err != nil {
-		return err
-	}
-
-	signature := tpm2.Signature{
-		SigAlg: tpm2.SigSchemeAlgRSASSA,
-		Signature: &tpm2.SignatureU{
-			RSASSA: &tpm2.SignatureRSASSA{
-				Hash: tpm2.HashAlgorithmSHA256,
-				Sig:  approvedPolicySignature}}}
-
-	ticket, err := tpm.VerifySignature(keyCtx, approvedPolicyAuthDigest, &signature)
-	if err != nil {
-		return err
-	}
-
-	polss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs)
 	if err != nil {
 		return err
 	}
 	defer tpm.FlushContext(polss)
-
-	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
-	err = tpm.PolicyPCR(polss, nil, pcrSelections)
-	if err != nil {
-		return err
-	}
-
-	err = tpm.PolicyAuthorize(polss, approvedPolicy, nil, keyCtx.Name(), ticket)
-	if err != nil {
-		return err
-	}
 
 	return tpm.NVWrite(index, index, secret, 0, polss)
 }
@@ -273,47 +283,11 @@ func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, appro
 		return nil, err
 	}
 
-	// null-hierarchy won't produce a valid ticket, go with owner
-	public := newExternalRSAPub(&key)
-	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleOwner)
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.FlushContext(keyCtx)
-
-	approvedPolicyAuthDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPolicy, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	signature := tpm2.Signature{
-		SigAlg: tpm2.SigSchemeAlgRSASSA,
-		Signature: &tpm2.SignatureU{
-			RSASSA: &tpm2.SignatureRSASSA{
-				Hash: tpm2.HashAlgorithmSHA256,
-				Sig:  approvedPolicySignature}}}
-
-	ticket, err := tpm.VerifySignature(keyCtx, approvedPolicyAuthDigest, &signature)
-	if err != nil {
-		return nil, err
-	}
-
-	polss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs)
 	if err != nil {
 		return nil, err
 	}
 	defer tpm.FlushContext(polss)
-
-	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
-	err = tpm.PolicyPCR(polss, nil, pcrSelections)
-	if err != nil {
-		return nil, err
-	}
-
-	err = tpm.PolicyAuthorize(polss, approvedPolicy, nil, keyCtx.Name(), ticket)
-	if err != nil {
-		return nil, err
-	}
 
 	pub, _, err := tpm.NVReadPublic(index)
 	if err != nil {
