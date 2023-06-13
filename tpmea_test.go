@@ -10,33 +10,53 @@ func TestGenerateAuthDigest(t *testing.T) {
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
-		return
 	}
 
 	t.Logf("Authorization Digest : %x", authorizationDigest)
 }
 
 func TestReadPCRs(t *testing.T) {
-	_, err := ReadPCRs([]int{0})
+	_, err := ReadPCRs([]int{0}, AlgoSHA256)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
-		return
 	}
 }
 
-func TestSealUnseal(t *testing.T) {
+//func TestPCRReset(t *testing.T) {
+//	err := ResetPCR(16)
+//	if err != nil {
+//		t.Errorf("Expected no error, got %v", err)
+//	}
+
+//	pcrs, err := ReadPCRs([]int{0}, AlgoSHA256)
+//	byes
+
+//func TestPCRExtend(t *testing.T) {
+//	pcrs, err := ReadPCRs([]int{0}, AlgoSHA256)
+//	if err != nil {
+//		t.Errorf("Expected no error, got %v", err)
+//	}
+
+//}
+
+func TestSimpleSealUnseal(t *testing.T) {
 	key, _ := GenKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
-	pcrs, err := ReadPCRs([]int{0})
+	pcrs, err := ReadPCRs([]int{0}, AlgoSHA256)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
-	pcrsList := SHA256PCRList{{Index: 0, Digest: pcrs[0].Digest}}
+	pcrsList := PCRList{
+		Algo: AlgoSHA256,
+		Pcrs: []PCR{{
+			Index:  0,
+			Digest: pcrs.Pcrs[0].Digest}}}
+
 	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, false)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)

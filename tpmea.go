@@ -19,12 +19,41 @@ const (
 	PolicyRef     = "eveos_policy.ref"
 )
 
-type SHA256PCR struct {
+type PCRHashAlgo int
+
+const (
+	AlgoSHA1   = PCRHashAlgo(0)
+	AlgoSHA256 = PCRHashAlgo(1)
+	AlgoSHA384 = PCRHashAlgo(2)
+	AlgoSHA512 = PCRHashAlgo(3)
+)
+
+type PCR struct {
 	Index  int
 	Digest []byte
 }
 
-type SHA256PCRList []SHA256PCR
+type PCRS []PCR
+
+type PCRList struct {
+	Pcrs PCRS
+	Algo PCRHashAlgo
+}
+
+func getPCRAlgo(algo PCRHashAlgo) tpm2.HashAlgorithmId {
+	switch algo {
+	case AlgoSHA1:
+		return tpm2.HashAlgorithmSHA1
+	case AlgoSHA256:
+		return tpm2.HashAlgorithmSHA256
+	case AlgoSHA384:
+		return tpm2.HashAlgorithmSHA384
+	case AlgoSHA512:
+		return tpm2.HashAlgorithmSHA512
+	default:
+		return tpm2.HashAlgorithmSHA256
+	}
+}
 
 func getTpmHandle() (*tpm2.TPMContext, error) {
 	tcti, err := linux.OpenDevice(TpmDevicePath)
@@ -94,6 +123,57 @@ func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []b
 	return polss, nil
 }
 
+func ExtendPCR(index int, algo PCRHashAlgo, data []byte) error {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return err
+	}
+	defer tpm.Close()
+
+	pcrHashAlgo := getPCRAlgo(algo)
+	h := getPCRAlgo(algo).NewHash()
+	h.Write(data)
+
+	digest := tpm2.TaggedHashList{tpm2.MakeTaggedHash(pcrHashAlgo, h.Sum(nil))}
+	return tpm.PCRExtend(tpm.PCRHandleContext(index), digest, nil)
+}
+
+func ResetPCR(index int) error {
+	if index == 16 || index == 23 {
+		tpm, err := getTpmHandle()
+		if err != nil {
+			return err
+		}
+		defer tpm.Close()
+
+		return tpm.PCRReset(tpm.PCRHandleContext(index), nil)
+	}
+
+	return errors.New("only PCR indexes 16 and 23 are resettable")
+}
+
+func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return PCRList{}, err
+	}
+	defer tpm.Close()
+
+	pcrHashAlgo := getPCRAlgo(algo)
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
+	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
+	if err != nil {
+		return PCRList{}, err
+	}
+
+	pcrList := PCRList{Algo: algo, Pcrs: make(PCRS, 0)}
+	for i, val := range pcrsValue[pcrHashAlgo] {
+		pcrList.Pcrs = append(pcrList.Pcrs, PCR{i, val})
+	}
+
+	return pcrList, nil
+}
+
 func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err error) {
 	privPem := pem.EncodeToMemory(
 		&pem.Block{
@@ -126,27 +206,6 @@ func GenKeyPair() (*rsa.PrivateKey, error) {
 	return rsa.GenerateKey(rand.Reader, 2048)
 }
 
-func ReadPCRs(pcrs []int) (SHA256PCRList, error) {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.Close()
-
-	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
-	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
-	if err != nil {
-		return nil, err
-	}
-
-	pcrList := make(SHA256PCRList, 0)
-	for i, val := range pcrsValue[tpm2.HashAlgorithmSHA256] {
-		pcrList = append(pcrList, SHA256PCR{i, val})
-	}
-
-	return pcrList, nil
-}
-
 func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -175,7 +234,7 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, er
 	return tpm.PolicyGetDigest(triss)
 }
 
-func GenerateSignedPolicy(key *rsa.PrivateKey, pcrs SHA256PCRList, withRBP bool) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
+func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, withRBP bool) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, nil, err
@@ -201,14 +260,15 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrs SHA256PCRList, withRBP bool)
 
 	sel := make([]int, 0)
 	digests := make(map[int]tpm2.Digest)
-	for _, pcr := range pcrs {
+	for _, pcr := range pcrList.Pcrs {
 		sel = append(sel, pcr.Index)
 		digests[pcr.Index] = pcr.Digest
 	}
 
-	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: sel}}
-	pcrValues := tpm2.PCRValues{tpm2.HashAlgorithmSHA256: digests}
-	pcrDigests, err := policyutil.ComputePCRDigest(tpm2.HashAlgorithmSHA256, pcrSelections, pcrValues)
+	pcrHashAlgo := getPCRAlgo(pcrList.Algo)
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel}}
+	pcrValues := tpm2.PCRValues{pcrHashAlgo: digests}
+	pcrDigests, err := policyutil.ComputePCRDigest(pcrHashAlgo, pcrSelections, pcrValues)
 	if err != nil {
 		return nil, nil, err
 	}
