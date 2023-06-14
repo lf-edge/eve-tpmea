@@ -182,6 +182,8 @@ func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err 
 	return privPem, pubPem, nil
 }
 
+// ExtendPCR extends the provided PCR index with hash of the data,
+// hash algorithm to use is determined by algo parameter.
 func ExtendPCR(index int, algo PCRHashAlgo, data []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -197,6 +199,8 @@ func ExtendPCR(index int, algo PCRHashAlgo, data []byte) error {
 	return tpm.PCRExtend(tpm.PCRHandleContext(index), digest, nil)
 }
 
+// ResetPCR resets PCR value at the provide index, this only works on indexes
+// 16 and 23, as per spec, other indexes are not resettable.
 func ResetPCR(index int) error {
 	if index == 16 || index == 23 {
 		tpm, err := getTpmHandle()
@@ -211,6 +215,8 @@ func ResetPCR(index int) error {
 	return errors.New("only PCR indexes 16 and 23 are resettable")
 }
 
+// ReadPCRs will read the value of PCR indexes provided by pcrs argument,
+// the algo defines what banks should be read (e.g SHA1 or SHA256).
 func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -233,6 +239,13 @@ func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	return pcrList, nil
 }
 
+// DefineMonotonicCounter will define a monotonic NV counter at the given index,
+// function will initialize the counter and returns the its current value.
+//
+// monotonic counters will retain their value and won't go away even if undefined,
+// because of this if the handle already exist and it's attributes matches what
+// we need, it will get initialized first if it is uninitialized, and then
+// its current value is returned.
 func DefineMonotonicCounter(handle uint32) (uint64, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -289,6 +302,8 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 	return 1, nil
 }
 
+// IncreaseMonotonicCounter will increase the value of the monotonic counter at
+// provided index, by one.
 func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -314,6 +329,12 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 	return counter, nil
 }
 
+// GenerateAuthDigest will generate a authorization digest based on the provided
+// public key. The returned authorizationDigest is the basis for creating mutable
+// TPM policies.
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
 func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -345,6 +366,14 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, er
 	return tpm.PolicyGetDigest(triss)
 }
 
+// GenerateSignedPolicy will compute the digest of PolicyNV and PolicyPCR and
+// signs it using the provided key. It will return the desiredPolicy which
+// represent the run-time state that the target TPM should match (i.e PCR values),
+// and desiredPolicySignature which is the signature of the desiredPolicy that gets
+// validated on the target TPM to match the key which is used to generate
+// authorizationDigest from GenerateAuthDigest().
+//
+// The private key must be belong to the pair that is used with GenerateAuthDigest.
 func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -420,6 +449,8 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (desire
 	return policyDigest, s.Signature.RSASSA.Sig, err
 }
 
+// SealSecret will write the provide secret to the TPM. The authDigest parameter
+// binds the unseal operation with valid and singed policy.
 func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP, secret []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -459,6 +490,11 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 	return tpm.NVWrite(index, index, secret, 0, polss)
 }
 
+// UnsealSecret will read the secret from the TPM. To read the secret the
+// approvedPolicy and approvedPolicySignature (result of GenerateSignedPolicy)
+// most be provided, plus the actual PolicyPCR and PolicyNV that will get evaluated
+// at run time in TPM. If approvedPolicy is signed with the valid key and provided
+// TPM states matches the run-time state of the TPM, the secret is returned.
 func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) ([]byte, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
