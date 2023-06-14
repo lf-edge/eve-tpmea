@@ -121,6 +121,38 @@ func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []b
 	return polss, nil
 }
 
+func GenKeyPair() (*rsa.PrivateKey, error) {
+	// 2048 is the limit for TPM
+	return rsa.GenerateKey(rand.Reader, 2048)
+}
+
+func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err error) {
+	privPem := pem.EncodeToMemory(
+		&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(key),
+		},
+	)
+
+	if privPem == nil {
+		return nil, nil, errors.New("failed to convert private key to PEM format")
+	}
+
+	pub := key.Public()
+	pubPem := pem.EncodeToMemory(
+		&pem.Block{
+			Type:  "RSA PUBLIC KEY",
+			Bytes: x509.MarshalPKCS1PublicKey(pub.(*rsa.PublicKey)),
+		},
+	)
+
+	if pubPem == nil {
+		return nil, nil, errors.New("failed to convert public key to PEM format")
+	}
+
+	return privPem, pubPem, nil
+}
+
 func ExtendPCR(index int, algo PCRHashAlgo, data []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -172,36 +204,84 @@ func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	return pcrList, nil
 }
 
-func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err error) {
-	privPem := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "RSA PRIVATE KEY",
-			Bytes: x509.MarshalPKCS1PrivateKey(key),
-		},
-	)
+func DefineMonotonicCounter(handle uint32) (uint64, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return 0, err
+	}
+	defer tpm.Close()
 
-	if privPem == nil {
-		return nil, nil, errors.New("failed to convert private key to pem format")
+	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
+	if err == nil {
+		// handle already exists, check if the attributes match what we need,
+		// is so, we just use it.
+		nvpub, _, err := tpm.NVReadPublic(index)
+		if err != nil {
+			return 0, err
+		}
+
+		attr := tpm2.AttrNVOwnerRead | tpm2.AttrNVOwnerWrite
+		if (nvpub.Attrs & attr) != attr {
+			return 0, errors.New("a counter at provide handle already exists with mismatched attributes")
+		}
+
+		// if it is not initialized, initialize it
+		if (nvpub.Attrs & tpm2.AttrNVWritten) != tpm2.AttrNVWritten {
+			err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
+			if err != nil {
+				return 0, err
+			}
+		}
+
+		counter, err := tpm.NVReadCounter(tpm.OwnerHandleContext(), index, nil)
+		if err != nil {
+			return 0, err
+		}
+
+		return counter, nil
 	}
 
-	pub := key.Public()
-	pubPem := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "RSA PUBLIC KEY",
-			Bytes: x509.MarshalPKCS1PublicKey(pub.(*rsa.PublicKey)),
-		},
-	)
-
-	if pubPem == nil {
-		return nil, nil, errors.New("failed to convert public key to pem format")
+	nvpub := tpm2.NVPublic{
+		Index:   tpm2.Handle(handle),
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs:   tpm2.NVTypeCounter.WithAttrs(tpm2.AttrNVOwnerRead | tpm2.AttrNVOwnerWrite),
+		Size:    8}
+	index, err = tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &nvpub, nil)
+	if err != nil {
+		return 0, err
 	}
 
-	return privPem, pubPem, nil
+	err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	return 1, nil
 }
 
-func GenKeyPair() (*rsa.PrivateKey, error) {
-	// 2048 is the limit for TPM
-	return rsa.GenerateKey(rand.Reader, 2048)
+func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return 0, err
+	}
+	defer tpm.Close()
+
+	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
+	if err != nil {
+		return 0, err
+	}
+
+	err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	counter, err := tpm.NVReadCounter(tpm.OwnerHandleContext(), index, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	return counter, nil
 }
 
 func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, err error) {
@@ -253,6 +333,7 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, withRBP bool) (d
 	defer tpm.FlushContext(triss)
 
 	if withRBP {
+		//tpm.PolicyNV(nil, nil, nil)
 		return nil, nil, errors.New("RBP not implemented")
 	}
 
@@ -351,5 +432,6 @@ func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, appro
 	if err != nil {
 		return nil, err
 	}
+
 	return tpm.NVRead(index, index, pub.Size, 0, polss)
 }
