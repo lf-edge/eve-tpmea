@@ -14,9 +14,7 @@ import (
 )
 
 const (
-	//TpmDevicePath is the TPM device file path
 	TpmDevicePath = "/dev/tpmrm0"
-	PolicyRef     = "eveos_policy.ref"
 )
 
 type PCRHashAlgo int
@@ -337,7 +335,7 @@ func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, appro
 	}
 	defer tpm.Close()
 
-	// don't bother with auth, if the handle is not valid
+	// don't bother authorizing, if the handle is not valid
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err != nil {
 		return nil, err
