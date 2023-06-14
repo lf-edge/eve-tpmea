@@ -124,13 +124,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
-	err = SealSecret(NV_INDEX, key.PublicKey,
-		authorizationDigest,
-		desiredPolicy,
-		desiredPolicySignature,
-		PCR_INDEXES,
-		RBP{},
-		writtenSecret)
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -183,13 +177,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
-	err = SealSecret(NV_INDEX, key.PublicKey,
-		authorizationDigest,
-		desiredPolicy,
-		desiredPolicySignature,
-		PCR_INDEXES,
-		RBP{},
-		writtenSecret)
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -296,13 +284,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
-	err = SealSecret(NV_INDEX, key.PublicKey,
-		authorizationDigest,
-		desiredPolicy,
-		desiredPolicySignature,
-		PCR_INDEXES,
-		rbp,
-		writtenSecret)
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}

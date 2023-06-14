@@ -451,7 +451,7 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (desire
 
 // SealSecret will write the provide secret to the TPM. The authDigest parameter
 // binds the unseal operation with valid and singed policy.
-func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP, secret []byte) error {
+func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return err
@@ -471,7 +471,7 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 	nvpub := tpm2.NVPublic{
 		Index:      tpm2.Handle(handle),
 		NameAlg:    tpm2.HashAlgorithmSHA256,
-		Attrs:      tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPolicyRead | tpm2.AttrNVPolicyWrite | tpm2.AttrNVReadStClear),
+		Attrs:      tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPolicyRead | tpm2.AttrNVOwnerWrite | tpm2.AttrNVReadStClear),
 		AuthPolicy: authDigest,
 		Size:       uint16(len(secret))}
 	index, err = tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &nvpub, nil)
@@ -479,15 +479,7 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 		return err
 	}
 
-	// perform the TPM commands in order, this will work only if policy signature
-	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs, rbp)
-	if err != nil {
-		return err
-	}
-	defer tpm.FlushContext(polss)
-
-	return tpm.NVWrite(index, index, secret, 0, polss)
+	return tpm.NVWrite(tpm.OwnerHandleContext(), index, secret, 0, nil)
 }
 
 // UnsealSecret will read the secret from the TPM. To read the secret the
