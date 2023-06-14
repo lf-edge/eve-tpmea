@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
 
@@ -36,6 +37,11 @@ type PCRS []PCR
 type PCRList struct {
 	Pcrs PCRS
 	Algo PCRHashAlgo
+}
+
+type RBP struct {
+	Counter uint32
+	Check   uint64
 }
 
 func getPCRAlgo(algo PCRHashAlgo) tpm2.HashAlgorithmId {
@@ -75,7 +81,7 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int) (tpm2.SessionContext, error) {
+func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
 
 	// null-hierarchy won't produce a valid ticket, go with owner
 	public := newExternalRSAPub(&key)
@@ -105,6 +111,20 @@ func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []b
 	polss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
 	if err != nil {
 		return nil, err
+	}
+
+	if rbp != (RBP{}) {
+		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
+		if err != nil {
+			return nil, err
+		}
+
+		operandB := make([]byte, 8)
+		binary.BigEndian.PutUint64(operandB, rbp.Check)
+		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, polss, operandB, 0, tpm2.OpUnsignedLE, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
@@ -312,7 +332,7 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, er
 	return tpm.PolicyGetDigest(triss)
 }
 
-func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, withRBP bool) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
+func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, nil, err
@@ -332,9 +352,18 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, withRBP bool) (d
 	}
 	defer tpm.FlushContext(triss)
 
-	if withRBP {
-		//tpm.PolicyNV(nil, nil, nil)
-		return nil, nil, errors.New("RBP not implemented")
+	if rbp != (RBP{}) {
+		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
+		if err != nil {
+			return nil, nil, err
+		}
+
+		operandB := make([]byte, 8)
+		binary.BigEndian.PutUint64(operandB, rbp.Check)
+		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, triss, operandB, 0, tpm2.OpUnsignedLE, nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	sel := make([]int, 0)
@@ -372,7 +401,7 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, withRBP bool) (d
 	return policyDigest, s.Signature.RSASSA.Sig, err
 }
 
-func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, secret []byte) error {
+func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP, secret []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return err
@@ -400,7 +429,7 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 		return err
 	}
 
-	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs)
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs, rbp)
 	if err != nil {
 		return err
 	}
@@ -409,7 +438,7 @@ func SealSecret(handle uint32, key rsa.PublicKey, authDigest []byte, approvedPol
 	return tpm.NVWrite(index, index, secret, 0, polss)
 }
 
-func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int) ([]byte, error) {
+func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) ([]byte, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, err
@@ -422,7 +451,7 @@ func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, appro
 		return nil, err
 	}
 
-	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs)
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs, rbp)
 	if err != nil {
 		return nil, err
 	}
