@@ -18,76 +18,76 @@ func TestGenerateAuthDigest(t *testing.T) {
 	key, _ := GenKeyPair()
 	_, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 }
 
 func TestReadPCRs(t *testing.T) {
 	_, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 }
 
 func TestPCRReset(t *testing.T) {
 	err := ExtendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	err = ResetPCR(RESETABLE_PCR_INDEX)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	afterResetPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	after := afterResetPcrs.Pcrs[0].Digest
 	reset := make([]byte, 32)
 	if bytes.Equal(after, reset) != true {
-		t.Errorf("Expected equal PCR values, got %x != %x", after, reset)
+		t.Fatalf("Expected equal PCR values, got %x != %x", after, reset)
 	}
 }
 
 func TestPCRExtend(t *testing.T) {
 	beforeExtendPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	err = ExtendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	afterExtendPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	before := beforeExtendPcrs.Pcrs[0].Digest
 	after := afterExtendPcrs.Pcrs[0].Digest
 	if bytes.Equal(before, after) {
-		t.Errorf("Expected different PCR values, got %x = %x", before, after)
+		t.Fatalf("Expected different PCR values, got %x = %x", before, after)
 	}
 }
 
 func TestMonotonicCounter(t *testing.T) {
 	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if incCounter != (initCounter + 1) {
-		t.Errorf("Expected counter value of %d, got %d", (initCounter + 1), incCounter)
+		t.Fatalf("Expected counter value of %d, got %d", (initCounter + 1), incCounter)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 	key, _ := GenKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// since this should run on a emulated TPM, we might start will PCR values
@@ -103,13 +103,13 @@ func TestSimpleSealUnseal(t *testing.T) {
 	for _, index := range PCR_INDEXES {
 		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
-			t.Errorf("Expected no error, got %v", err)
+			t.Fatalf("Expected no error, got %v", err)
 		}
 	}
 
 	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	sealingPcrs := make(PCRS, 0)
@@ -120,7 +120,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 
 	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
@@ -132,7 +132,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 		RBP{},
 		writtenSecret)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
@@ -142,11 +142,11 @@ func TestSimpleSealUnseal(t *testing.T) {
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	key, _ := GenKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// since this should run on a emulated TPM, we might start will PCR values
@@ -162,13 +162,13 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	for _, index := range PCR_INDEXES {
 		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
-			t.Errorf("Expected no error, got %v", err)
+			t.Fatalf("Expected no error, got %v", err)
 		}
 	}
 
 	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	sealingPcrs := make(PCRS, 0)
@@ -179,7 +179,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 
 	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
@@ -191,7 +191,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		RBP{},
 		writtenSecret)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
@@ -201,23 +201,23 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
 	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// this must fail due to PCR mismatch
@@ -228,7 +228,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		PCR_INDEXES,
 		RBP{})
 	if err == nil {
-		t.Errorf("Expected error, got nothing!")
+		t.Fatalf("Expected error, got nothing!")
 	}
 
 	sealingPcrs = make(PCRS, 0)
@@ -239,7 +239,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 
 	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
@@ -249,11 +249,11 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	key, _ := GenKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// since this should run on a emulated TPM, we might start will PCR values
@@ -269,19 +269,19 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	for _, index := range PCR_INDEXES {
 		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
-			t.Errorf("Expected no error, got %v", err)
+			t.Fatalf("Expected no error, got %v", err)
 		}
 	}
 
 	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: initCounter}
 
 	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	sealingPcrs := make(PCRS, 0)
@@ -292,7 +292,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	writtenSecret := []byte("THIS_IS_VERY_SECRET")
@@ -304,7 +304,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		rbp,
 		writtenSecret)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
@@ -314,23 +314,23 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
 	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// this must fail due to PCR mismatch
@@ -341,7 +341,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
-		t.Errorf("Expected error, got nothing!")
+		t.Fatalf("Expected error, got nothing!")
 	}
 
 	sealingPcrs = make(PCRS, 0)
@@ -352,7 +352,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
@@ -362,17 +362,17 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
 	// not lets increase the counter
 	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
@@ -383,14 +383,14 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
-		t.Errorf("Expected error, got nothing!")
+		t.Fatalf("Expected error, got nothing!")
 	}
 
 	// update the policy and try again
 	rbp.Check = incCounter
 	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
@@ -400,10 +400,10 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
-		t.Errorf("Expected %s, got %s", writtenSecret, readSecret)
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 }
