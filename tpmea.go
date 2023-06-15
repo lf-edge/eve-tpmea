@@ -369,9 +369,9 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) 
 }
 
 // GenerateSignedPolicy will compute the digest of PolicyNV and PolicyPCR and
-// signs it using the provided key. It will return the desiredPolicy which
+// signs it using the provided key. It will return the approvedPolicy which
 // represent the run-time state that the target TPM should match (i.e PCR values),
-// and desiredPolicySignature which is the signature of the desiredPolicy that gets
+// and approvedPolicySignature which is the signature of the approvedPolicy that gets
 // validated on the target TPM to match the key which is used to generate
 // authorizationDigest from GenerateAuthDigest().
 //
@@ -518,6 +518,11 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approve
 	return tpm.NVRead(index, index, pub.Size, 0, polss)
 }
 
+// RotateAuthDigestKey generates signs the new auth public key using the old one,
+// and generates a new Authorization Digest using new key.
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
 func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySig []byte, newAuthDigest tpm2.Digest, err error) {
 	message, err := json.Marshal(newKey)
 	if err != nil {
@@ -567,6 +572,11 @@ func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeyS
 	return signature, digest, nil
 }
 
+// RotateAuthDigestWithPolicy will first do a RotateAuthDigestKey and then
+// signs the policy using new key
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
 func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySig []byte, newAuthDigest tpm2.Digest, approvedPolNewSig []byte, err error) {
 	newkeySig, newAuthDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
 	if err != nil {
@@ -581,6 +591,9 @@ func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, 
 	return newkeySig, newAuthDigest, approvedPolNewSig, nil
 }
 
+// VerifyAuthDigestRotation verifies that the new key signed by the old key,
+// this is needed when the target TPM is doing a Authorization Digest rotation
+// using a new key.
 func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte) error {
 	message, err := json.Marshal(newKey)
 	if err != nil {
@@ -593,6 +606,11 @@ func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newk
 	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySig)
 }
 
+// ResealSecretWithNewAuthDigest will first validates the new key by calling
+// VerifyAuthDigestRotation, then unseals the secret using old key and policies,
+// then reseals it again using the new Authorization Digest that is bind to the
+// new key, meaning subsequent unseal operations require policies that are signed
+// with the new key.
 func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
 	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySig)
 	if err != nil {
