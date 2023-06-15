@@ -58,7 +58,7 @@ readSecret, err := UnsealSecret(0x1500016,
     rbp) // rbp counter to be evaluated
 ```
 
-## Updating a Policy
+### Updating a Policy
 For updating a policy, similar procedure is used. Server simply creates a new policy and sends it to the client:
 ```go
 sealingPcrs := []PCR{{Index: 0, Digest: []byte{0x67, 0x65, ..., 0x65}},
@@ -78,7 +78,7 @@ counter, err = IncreaseMonotonicCounter(0x1500017)
 
 Client should be able to read back the key with a new policy that matches the new system state.
 
-## Rotating Signing Key
+### Rotating Signing Key
 To rotate the signing key, using the old key, sign the new key and generate a new Authorization Digest based on the new key and send the `newKey.PublicKey`, `newAuthDigest` and `approvedPolicyNewSig` to the client.
 
 ```go
@@ -111,3 +111,41 @@ readSecret, err := UnsealSecret(0x1500016,
     PCR_INDEXES,
     rbp)
 ```
+
+# Testing
+Testing can be done on emulated TPM, on ubuntu you can emulate a TPM by first installing swtpm and (optionally) tpm2-tools:
+
+```bash
+sudo apt-get install swtpm tpm2-tools
+```
+
+For the emulation, first load the `tpm_vtpm_proxy`:
+
+```bash
+sudo modprobe tpm_vtpm_proxy
+```
+
+Next install and compile the linux-vtpm-tests, `vtpmctrl` is required to glue `swtpm` and `tpm_vtpm_proxy` and created TPM char devices:
+
+```bash
+git clone https://github.com/stefanberger/linux-vtpm-tests.git
+cd linux-vtpm-tests
+./bootstrap.sh
+./configure
+make
+```
+
+Finally emulate the TPM:
+
+```bash
+./linux-vtpm-tests/src/vtpmctrl --tpm2 --spawn /bin/swtpm chardev --tpm2 --fd %fd --tpmstate dir=/tmp --flags not-need-init --locality allow-set-locality
+```
+
+You should see the TPM device available:
+
+```bash
+~$ ls /dev/tpm*
+/dev/tpm0  /dev/tpmrm0
+```
+
+now you can simply run the `tpmea` tests by invoking `go test -v`.
