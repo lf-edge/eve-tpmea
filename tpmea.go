@@ -337,6 +337,8 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side  (attester, Challenger, etc).
 func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -376,6 +378,11 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) 
 // authorizationDigest from GenerateAuthDigest().
 //
 // The private key must be belong to the pair that is used with GenerateAuthDigest.
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side (attester, Challenger, etc).
 func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (approvedPol []byte, approvedPolSig []byte, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -523,6 +530,8 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approve
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side  (attester, Challenger, etc).
 func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySig []byte, newAuthDigest tpm2.Digest, err error) {
 	message, err := json.Marshal(newKey)
 	if err != nil {
@@ -577,6 +586,8 @@ func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeyS
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side  (attester, Challenger, etc).
 func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySig []byte, newAuthDigest tpm2.Digest, approvedPolNewSig []byte, err error) {
 	newkeySig, newAuthDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
 	if err != nil {
