@@ -1,10 +1,12 @@
 package tpmea
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 
@@ -81,8 +83,8 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
-	public := newExternalRSAPub(&key)
+func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
+	public := newExternalRSAPub(key)
 
 	// null-hierarchy won't produce a valid ticket, go with owner
 	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleOwner)
@@ -216,7 +218,7 @@ func ResetPCR(index int) error {
 }
 
 // ReadPCRs will read the value of PCR indexes provided by pcrs argument,
-// the algo defines what banks should be read (e.g SHA1 or SHA256).
+// the algo defines which banks should be read (e.g SHA1 or SHA256).
 func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -487,7 +489,7 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 // most be provided, plus the actual PolicyPCR and PolicyNV that will get evaluated
 // at run time in TPM. If approvedPolicy is signed with the valid key and provided
 // TPM states matches the run-time state of the TPM, the secret is returned.
-func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) ([]byte, error) {
+func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) ([]byte, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, err
@@ -514,4 +516,93 @@ func UnsealSecret(handle uint32, key rsa.PublicKey, approvedPolicy []byte, appro
 	}
 
 	return tpm.NVRead(index, index, pub.Size, 0, polss)
+}
+
+func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySignature []byte, newAuthorizationDigest tpm2.Digest, err error) {
+	message, err := json.Marshal(newKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sh := crypto.SHA256.New()
+	sh.Write(message)
+	hash := sh.Sum(nil)
+	signature, err := rsa.SignPKCS1v15(nil, oldKey, crypto.SHA256, hash)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.Close()
+
+	public := newExternalRSAPub(newKey)
+	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleNull)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.FlushContext(keyCtx)
+
+	// we generate the auth digest in a trial session, no evaluation in TPM is
+	// required, we are only interested in the final session digest
+	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.FlushContext(triss)
+
+	// ask TPM to compute the session digest and retrieve it
+	err = tpm.PolicyAuthorize(triss, nil, nil, keyCtx.Name(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	digest, err := tpm.PolicyGetDigest(triss)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return signature, digest, nil
+}
+
+func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySignature []byte, newAuthorizationDigest tpm2.Digest, desiredPolicyNewSignature []byte, err error) {
+	newkeySignature, newAuthorizationDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	_, desiredPolicyNewSignature, err = GenerateSignedPolicy(newKey, pcrList, rbp)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return newkeySignature, newAuthorizationDigest, desiredPolicyNewSignature, nil
+}
+
+func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySignature []byte) error {
+	message, err := json.Marshal(newKey)
+	if err != nil {
+		return err
+	}
+
+	sh := crypto.SHA256.New()
+	sh.Write(message)
+	hash := sh.Sum(nil)
+	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySignature)
+}
+
+func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySignature []byte, newAuthorizationDigest tpm2.Digest, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) error {
+	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySignature)
+	if err != nil {
+		return err
+	}
+
+	secret, err := UnsealSecret(handle, oldKey, approvedPolicy, approvedPolicySignature, pcrs, rbp)
+	if err != nil {
+		return err
+	}
+
+	return SealSecret(handle, newAuthorizationDigest, secret)
 }

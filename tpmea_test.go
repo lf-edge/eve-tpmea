@@ -130,7 +130,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -183,7 +183,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -210,7 +210,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 
 	// this must fail due to PCR mismatch
 	_, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -231,7 +231,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -290,7 +290,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	readSecret, err := UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -317,7 +317,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	// this must fail due to PCR mismatch
 	_, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -338,7 +338,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -359,7 +359,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
 	_, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
@@ -376,7 +376,173 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
-		key.PublicKey,
+		&key.PublicKey,
+		desiredPolicy,
+		desiredPolicySignature,
+		PCR_INDEXES,
+		rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if bytes.Equal(writtenSecret, readSecret) != true {
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
+	}
+}
+
+func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.T) {
+	oldKey, _ := GenKeyPair()
+	authorizationDigest, err := GenerateAuthDigest(&oldKey.PublicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	// since this should run on a emulated TPM, we might start will PCR values
+	// being zero, so extend them to non-zero first.
+	for _, index := range PCR_INDEXES {
+		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+	}
+
+	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: initCounter}
+
+	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	sealingPcrs := make(PCRS, 0)
+	for _, index := range PCR_INDEXES {
+		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
+	}
+	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+
+	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(oldKey, pcrsList, rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	writtenSecret := []byte("THIS_IS_VERY_SECRET")
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	newKey, _ := GenKeyPair()
+	newkeySig, newAuthDigest, desiredPolNewSig, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	err = ResealSecretWithNewAuthDigest(NV_INDEX,
+		&oldKey.PublicKey,
+		&newKey.PublicKey,
+		newkeySig,
+		newAuthDigest,
+		desiredPolicy,
+		desiredPolicySignature,
+		PCR_INDEXES,
+		rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	readSecret, err := UnsealSecret(NV_INDEX,
+		&newKey.PublicKey,
+		desiredPolicy,
+		desiredPolNewSig,
+		PCR_INDEXES,
+		rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if bytes.Equal(writtenSecret, readSecret) != true {
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
+	}
+
+	desiredPolicySignature = desiredPolNewSig
+
+	// randomly select and extend a PCR index
+	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
+	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	// this must fail due to PCR mismatch
+	_, err = UnsealSecret(NV_INDEX,
+		&newKey.PublicKey,
+		desiredPolicy,
+		desiredPolicySignature,
+		PCR_INDEXES,
+		rbp)
+	if err == nil {
+		t.Fatalf("Expected error, got nothing!")
+	}
+
+	sealingPcrs = make(PCRS, 0)
+	for _, index := range PCR_INDEXES {
+		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
+	}
+	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+
+	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	readSecret, err = UnsealSecret(NV_INDEX,
+		&newKey.PublicKey,
+		desiredPolicy,
+		desiredPolicySignature,
+		PCR_INDEXES,
+		rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if bytes.Equal(writtenSecret, readSecret) != true {
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
+	}
+
+	// not lets increase the counter
+	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	// this should fail because the counter arithmetic op (ULE) don't hold anymore
+	_, err = UnsealSecret(NV_INDEX,
+		&newKey.PublicKey,
+		desiredPolicy,
+		desiredPolicySignature,
+		PCR_INDEXES,
+		rbp)
+	if err == nil {
+		t.Fatalf("Expected error, got nothing!")
+	}
+
+	// update the policy and try again
+	rbp.Check = incCounter
+	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	readSecret, err = UnsealSecret(NV_INDEX,
+		&newKey.PublicKey,
 		desiredPolicy,
 		desiredPolicySignature,
 		PCR_INDEXES,
