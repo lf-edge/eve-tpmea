@@ -83,7 +83,7 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
+func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
 	public := newExternalRSAPub(key)
 
 	// null-hierarchy won't produce a valid ticket, go with owner
@@ -95,7 +95,7 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []
 
 	// approvedPolicy by itself is a digest, but approvedPolicySignature is a
 	// signature over digest of approvedPolicy, so compute it first.
-	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPolicy, nil)
+	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPol, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []
 		Signature: &tpm2.SignatureU{
 			RSASSA: &tpm2.SignatureRSASSA{
 				Hash: tpm2.HashAlgorithmSHA256,
-				Sig:  approvedPolicySignature}}}
+				Sig:  approvedPolSig}}}
 	ticket, err := tpm.VerifySignature(keyCtx, approvedPolicyDigest, &signature)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []
 
 	// authorize policy will check if policies hold at runtime (i.e PCR values
 	// match the expected value and counter holds true on the arithmetic op)
-	err = tpm.PolicyAuthorize(polss, approvedPolicy, nil, keyCtx.Name(), ticket)
+	err = tpm.PolicyAuthorize(polss, approvedPol, nil, keyCtx.Name(), ticket)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +337,7 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
-func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, err error) {
+func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, err
@@ -376,7 +376,7 @@ func GenerateAuthDigest(key *rsa.PublicKey) (authorizationDigest tpm2.Digest, er
 // authorizationDigest from GenerateAuthDigest().
 //
 // The private key must be belong to the pair that is used with GenerateAuthDigest.
-func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (desiredPolicy []byte, desiredPolicySignature []byte, err error) {
+func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (approvedPol []byte, approvedPolSig []byte, err error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, nil, err
@@ -489,7 +489,7 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 // most be provided, plus the actual PolicyPCR and PolicyNV that will get evaluated
 // at run time in TPM. If approvedPolicy is signed with the valid key and provided
 // TPM states matches the run-time state of the TPM, the secret is returned.
-func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) ([]byte, error) {
+func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) ([]byte, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, err
@@ -504,7 +504,7 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, appr
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySignature, pcrs, rbp)
+	polss, err := authorizeObject(tpm, key, approvedPol, approvedPolSig, pcrs, rbp)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +518,7 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, appr
 	return tpm.NVRead(index, index, pub.Size, 0, polss)
 }
 
-func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySignature []byte, newAuthorizationDigest tpm2.Digest, err error) {
+func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySig []byte, newAuthDigest tpm2.Digest, err error) {
 	message, err := json.Marshal(newKey)
 	if err != nil {
 		return nil, nil, err
@@ -567,21 +567,21 @@ func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeyS
 	return signature, digest, nil
 }
 
-func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySignature []byte, newAuthorizationDigest tpm2.Digest, desiredPolicyNewSignature []byte, err error) {
-	newkeySignature, newAuthorizationDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
+func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySig []byte, newAuthDigest tpm2.Digest, approvedPolNewSig []byte, err error) {
+	newkeySig, newAuthDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	_, desiredPolicyNewSignature, err = GenerateSignedPolicy(newKey, pcrList, rbp)
+	_, approvedPolNewSig, err = GenerateSignedPolicy(newKey, pcrList, rbp)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	return newkeySignature, newAuthorizationDigest, desiredPolicyNewSignature, nil
+	return newkeySig, newAuthDigest, approvedPolNewSig, nil
 }
 
-func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySignature []byte) error {
+func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte) error {
 	message, err := json.Marshal(newKey)
 	if err != nil {
 		return err
@@ -590,19 +590,19 @@ func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newk
 	sh := crypto.SHA256.New()
 	sh.Write(message)
 	hash := sh.Sum(nil)
-	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySignature)
+	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySig)
 }
 
-func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySignature []byte, newAuthorizationDigest tpm2.Digest, approvedPolicy []byte, approvedPolicySignature []byte, pcrs []int, rbp RBP) error {
-	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySignature)
+func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
+	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySig)
 	if err != nil {
 		return err
 	}
 
-	secret, err := UnsealSecret(handle, oldKey, approvedPolicy, approvedPolicySignature, pcrs, rbp)
+	secret, err := UnsealSecret(handle, oldKey, approvedPol, approvedPolSig, pcrs, rbp)
 	if err != nil {
 		return err
 	}
 
-	return SealSecret(handle, newAuthorizationDigest, secret)
+	return SealSecret(handle, newAuthDigest, secret)
 }

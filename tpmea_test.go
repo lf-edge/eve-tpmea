@@ -81,13 +81,13 @@ func TestMonotonicCounter(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
+	updatedCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if incCounter != (initCounter + 1) {
-		t.Fatalf("Expected counter value of %d, got %d", (initCounter + 1), incCounter)
+	if updatedCounter != (initCounter + 1) {
+		t.Fatalf("Expected counter value of %d, got %d", (initCounter + 1), updatedCounter)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
+	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -131,8 +131,8 @@ func TestSimpleSealUnseal(t *testing.T) {
 
 	readSecret, err := UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
@@ -171,7 +171,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
+	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -184,8 +184,8 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 
 	readSecret, err := UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
@@ -211,8 +211,8 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	// this must fail due to PCR mismatch
 	_, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		RBP{})
 	if err == nil {
@@ -225,15 +225,15 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, RBP{})
+	approvedPolicy, approvedPolicySignature, err = GenerateSignedPolicy(key, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		RBP{})
 	if err != nil {
@@ -261,11 +261,11 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		}
 	}
 
-	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	rbpCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: initCounter}
+	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 
 	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
@@ -278,7 +278,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(key, pcrsList, rbp)
+	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -291,8 +291,8 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	readSecret, err := UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -318,8 +318,8 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	// this must fail due to PCR mismatch
 	_, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
@@ -332,15 +332,15 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
+	approvedPolicy, approvedPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -352,7 +352,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	// not lets increase the counter
-	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
+	rbpCounter, err = IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -360,8 +360,8 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
 	_, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
@@ -369,16 +369,16 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 
 	// update the policy and try again
-	rbp.Check = incCounter
-	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
+	rbp.Check = rbpCounter
+	approvedPolicy, approvedPolicySignature, err = GenerateSignedPolicy(key, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -406,11 +406,11 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 		}
 	}
 
-	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	rbpCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: initCounter}
+	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 
 	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
@@ -423,7 +423,7 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err := GenerateSignedPolicy(oldKey, pcrsList, rbp)
+	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(oldKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -435,7 +435,7 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	}
 
 	newKey, _ := GenKeyPair()
-	newkeySig, newAuthDigest, desiredPolNewSig, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, rbp)
+	newkeySig, newAuthDigest, approvedPolicyNewSig, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -445,8 +445,8 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 		&newKey.PublicKey,
 		newkeySig,
 		newAuthDigest,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -455,8 +455,8 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 
 	readSecret, err := UnsealSecret(NV_INDEX,
 		&newKey.PublicKey,
-		desiredPolicy,
-		desiredPolNewSig,
+		approvedPolicy,
+		approvedPolicyNewSig,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -467,7 +467,8 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
-	desiredPolicySignature = desiredPolNewSig
+	// update the signature variable for subsequent uses
+	approvedPolicySignature = approvedPolicyNewSig
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
@@ -484,8 +485,8 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	// this must fail due to PCR mismatch
 	_, err = UnsealSecret(NV_INDEX,
 		&newKey.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
@@ -498,15 +499,15 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
+	approvedPolicy, approvedPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
 		&newKey.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
@@ -518,7 +519,7 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	}
 
 	// not lets increase the counter
-	incCounter, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
+	rbpCounter, err = IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -526,8 +527,8 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
 	_, err = UnsealSecret(NV_INDEX,
 		&newKey.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err == nil {
@@ -535,16 +536,16 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 	}
 
 	// update the policy and try again
-	rbp.Check = incCounter
-	desiredPolicy, desiredPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
+	rbp.Check = rbpCounter
+	approvedPolicy, approvedPolicySignature, err = GenerateSignedPolicy(newKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
 	readSecret, err = UnsealSecret(NV_INDEX,
 		&newKey.PublicKey,
-		desiredPolicy,
-		desiredPolicySignature,
+		approvedPolicy,
+		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
 	if err != nil {
