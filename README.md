@@ -113,7 +113,7 @@ readSecret, err := UnsealSecret(0x1500016,
 ```
 
 # Testing
-Testing can be done on emulated TPM, on ubuntu you can emulate a TPM by first installing swtpm and (optionally) tpm2-tools:
+Testing can be done on emulated TPM, on ubuntu you can emulate a TPM by first installing swtpm and (optionally for debugging) tpm2-tools:
 
 ```bash
 sudo apt-get install swtpm tpm2-tools
