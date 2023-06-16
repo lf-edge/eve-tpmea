@@ -138,7 +138,7 @@ make
 Finally emulate the TPM:
 
 ```bash
-./linux-vtpm-tests/src/vtpmctrl --tpm2 --spawn /bin/swtpm chardev --tpm2 --fd %fd --tpmstate dir=/tmp --flags not-need-init --locality allow-set-locality
+vtpmctrl --tpm2 --spawn /bin/swtpm chardev --tpm2 --fd %fd --tpmstate dir=/tmp --flags not-need-init --locality allow-set-locality
 ```
 
 You should see the TPM device available:
