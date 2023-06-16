@@ -76,7 +76,7 @@ Please notice while generating the policy, the `Check` variable for rollback pro
 counter, err = IncreaseMonotonicCounter(0x1500017)
 ```
 
-Client should be able to read back the key with a new policy that matches the new system state.
+Client should be able to read back the secret with a new policy that matches the new system state.
 
 ### Rotating Signing Key
 To rotate the signing key, using the old key, sign the new key and generate a new Authorization Digest based on the new key and send the `newKey.PublicKey`, `newAuthDigest` and `approvedPolicyNewSig` to the client.
