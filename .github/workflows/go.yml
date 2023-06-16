@@ -21,8 +21,28 @@ jobs:
       with:
         go-version: 1.19
 
+    - name : Setup
+      run: |
+        sudo apt-get update
+        sudo apt-get install git build-essential linux-headers-`uname -r` libefl-all-dev
+        git clone --depth 1 --branch v5.15 git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+        cd linux
+        #cp ../linux-headers-3.2.0-4-686-pae/Module.symvers .
+        make oldconfig
+        # enable CONFIG_FT1000=m
+        make prepare
+        make modules_prepare
+        make SUBDIRS=scripts/mod
+        make SUBDIRS=drivers/char/tpm modules
+        #cp drivers/staging/ft1000/ft1000-usb/ft1000.ko /lib/modules/3.2.0-4-686-pae/kernel/drivers/staging/
+        #depmod
+        #modprobe ft1000
+        #sudo ls /usr/src/kernel-sources-*
+        #sudo add-apt-repository ppa:stefanberger/swtpm-jammy
+        #sudo apt install swtpm -y
+
     - name: Build
-      run: go build -v ./...
+      run: go build -v
 
     - name: Test
-      run: go test -v ./...
+      run: go test -v
