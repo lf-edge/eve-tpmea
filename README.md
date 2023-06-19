@@ -3,7 +3,7 @@ The `tmpea` is a  small go package that provides simple to use API to create and
 
 A common scenario is to bind a secret with a PCR policy and store in TPM object, meaning that secret is revealed only when PCR values at run-time match the value of the good-know-state that is store the TPM object. This method stores the combined hash of PCR values of the good-know-state as the Authorization Policy Digest and therefore when there is PCR mismatch at run-time, it is not possible to neither read the secret nor update Authorization Policy Digest without destroying the object and losing access to its content.
 
-A common use-case for dynamic polices is the when system gets updated, as a result some PCR values might change and therefore as expected TPM refuses to reveal the secret. In this scenario using mutable policies, we can simply generate a new policy (for example with predicted PCR values that we know system will end up with, after applying the update) and sign it with the authorization key. After a system update, using the new policy we can still read back the secret as long as the new policy is validly signed by the authorization key and holds true when evaluated at runtime, meaning predicted update PCR values in the policy match the current state of the system. 
+A common use-case for dynamic polices is the when system gets updated, as a result some PCR values might change and therefore as expected TPM refuses to reveal the secret. In this scenario using mutable policies, we can simply generate a new policy (for example with predicted PCR values that we know system will end up with, after applying the update) and sign it with the authorization key. After a system update, using the new policy we can still read back the secret as long as the new policy is validly signed by the authorization key and holds true when evaluated at runtime, meaning predicted update PCR values in the policy match the current state of the system.
 
 ## Usage
 The modules relies on APIs from go-tpm2 packages, that are not yet part of any release, so make sure to use the master.
@@ -76,9 +76,9 @@ Please notice while generating the policy, the `Check` variable for rollback pro
 counter, err = IncreaseMonotonicCounter(0x1500017)
 ```
 
-Client should be able to read back the secret with a new policy that matches the new system state.
+Client must validate `approvedPolicySignature` signature using the `key.PublicKey` before replacing any old policy. After update Client should be able to read back the secret with a new policy that matches the new system state.
 
-### Rotating Signing Key
+### Rotating the Signing Key
 To rotate the signing key, using the old key, sign the new key and generate a new Authorization Digest based on the new key and send the `newKey.PublicKey`, `newAuthDigest` and `approvedPolicyNewSig` to the client.
 
 ```go
