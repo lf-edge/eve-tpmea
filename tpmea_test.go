@@ -391,7 +391,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 }
 
-func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.T) {
+func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 	oldKey, _ := GenKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&oldKey.PublicKey)
 	if err != nil {
@@ -621,7 +621,7 @@ func TestReadLocking(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
+	_, err = UnsealSecret(NV_INDEX,
 		&key.PublicKey,
 		approvedPolicy,
 		approvedPolicySignature,
