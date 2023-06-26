@@ -390,13 +390,6 @@ func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (approv
 	}
 	defer tpm.Close()
 
-	public := newExternalRSAPub(&key.PublicKey)
-	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleNull)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.FlushContext(keyCtx)
-
 	// we generate the policy digest in a trial session, because we don't want to
 	// evaluate the provided state, we are only interested in the final session
 	// digest that is computed as result of executing TPM commands, here PolicyNV and PolicyPCR.
