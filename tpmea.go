@@ -635,3 +635,29 @@ func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey 
 
 	return ResealSecretWithNewAuthDigestWithSecret(handle, oldKey, newKey, newkeySig, newAuthDigest, secret)
 }
+
+// ActivateReadLock prevents further reading of the data from provided index,
+// this restriction will gets deactivated on next tpm reset or restart.
+func ActivateReadLock(handle uint32, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return err
+	}
+	defer tpm.Close()
+
+	// don't bother authorizing, if the handle is not valid
+	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
+	if err != nil {
+		return err
+	}
+
+	// perform the TPM commands in order, this will work only if policy signature
+	// is valid and session digest matches the auth (saved) digest of the object.
+	polss, err := authorizeObject(tpm, key, approvedPol, approvedPolSig, pcrs, rbp)
+	if err != nil {
+		return err
+	}
+	defer tpm.FlushContext(polss)
+
+	return tpm.NVReadLock(index, index, polss)
+}

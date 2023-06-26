@@ -3,6 +3,7 @@ package tpmea
 import (
 	"bytes"
 	"math/rand"
+	"strings"
 	"testing"
 )
 
@@ -554,5 +555,81 @@ func TestMutablePolicySealUnsealWithRollbackProtectionAndKeyRotation(t *testing.
 
 	if bytes.Equal(writtenSecret, readSecret) != true {
 		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
+	}
+}
+
+func TestReadLocking(t *testing.T) {
+	key, _ := GenKeyPair()
+	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	// since this should run on a emulated TPM, we might start will PCR values
+	// being zero, so extend them to non-zero first.
+	for _, index := range PCR_INDEXES {
+		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		if err != nil {
+			t.Fatalf("Expected no error, got  \"%v\"", err)
+		}
+	}
+
+	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	sealingPcrs := make(PCRS, 0)
+	for _, index := range PCR_INDEXES {
+		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
+	}
+	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+
+	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(key, pcrsList, RBP{})
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	writtenSecret := []byte("THIS_IS_VERY_SECRET")
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	readSecret, err := UnsealSecret(NV_INDEX,
+		&key.PublicKey,
+		approvedPolicy,
+		approvedPolicySignature,
+		PCR_INDEXES,
+		RBP{})
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	if bytes.Equal(writtenSecret, readSecret) != true {
+		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
+	}
+
+	err = ActivateReadLock(NV_INDEX,
+		&key.PublicKey,
+		approvedPolicy,
+		approvedPolicySignature,
+		PCR_INDEXES,
+		RBP{})
+
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	readSecret, err = UnsealSecret(NV_INDEX,
+		&key.PublicKey,
+		approvedPolicy,
+		approvedPolicySignature,
+		PCR_INDEXES,
+		RBP{})
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_NV_LOCKED") != true {
+			t.Fatalf("Expected TPM_RC_NV_LOCKED error, got  \"%v\"", err)
+		}
 	}
 }
