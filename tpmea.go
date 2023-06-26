@@ -610,21 +610,28 @@ func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newk
 	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySig)
 }
 
-// ResealSecretWithNewAuthDigest will first validates the new key by calling
-// VerifyAuthDigestRotation, then unseals the secret using old key and policies,
-// then reseals it again using the new Authorization Digest that is bind to the
-// new key, meaning subsequent unseal operations require policies that are signed
-// with the new key.
-func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
+// ResealSecretWithNewAuthDigestWithSecret will first validates the new key
+// by calling VerifyAuthDigestRotation, then reseals the secret using the new
+// Authorization Digest that is bind to the new key, meaning subsequent unseal
+// operations require policies that are signed with the new key.
+func ResealSecretWithNewAuthDigestWithSecret(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
 	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySig)
 	if err != nil {
 		return err
 	}
+
+	return SealSecret(handle, newAuthDigest, secret)
+}
+
+// ResealSecretWithNewAuthDigest unseals the secret using old key and policies,
+// then validation and key resealing using ResealSecretWithNewAuthDigestWithSecret.
+// check out ResealSecretWithNewAuthDigestWithSecret for more information.
+func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
 
 	secret, err := UnsealSecret(handle, oldKey, approvedPol, approvedPolSig, pcrs, rbp)
 	if err != nil {
 		return err
 	}
 
-	return SealSecret(handle, newAuthDigest, secret)
+	return ResealSecretWithNewAuthDigestWithSecret(handle, oldKey, newKey, newkeySig, newAuthDigest, secret)
 }
