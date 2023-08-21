@@ -1,4 +1,4 @@
-module github.com/shjala/tpmea-go
+module github.com/lf-edge/eve-tpmea
 
 go 1.20
 
