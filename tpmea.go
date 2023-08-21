@@ -2,12 +2,9 @@ package tpmea
 
 import (
 	"crypto"
-	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 
 	"github.com/canonical/go-tpm2"
@@ -150,95 +147,6 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byt
 	}
 
 	return polss, nil
-}
-
-func GenKeyPair() (*rsa.PrivateKey, error) {
-	// 2048 is the limit for TPM
-	return rsa.GenerateKey(rand.Reader, 2048)
-}
-
-func GetKeyPemEncoding(key *rsa.PrivateKey) (private []byte, public []byte, err error) {
-	privPem := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "RSA PRIVATE KEY",
-			Bytes: x509.MarshalPKCS1PrivateKey(key),
-		},
-	)
-
-	if privPem == nil {
-		return nil, nil, errors.New("failed to convert private key to PEM format")
-	}
-
-	pub := key.Public()
-	pubPem := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "RSA PUBLIC KEY",
-			Bytes: x509.MarshalPKCS1PublicKey(pub.(*rsa.PublicKey)),
-		},
-	)
-
-	if pubPem == nil {
-		return nil, nil, errors.New("failed to convert public key to PEM format")
-	}
-
-	return privPem, pubPem, nil
-}
-
-// ExtendPCR extends the provided PCR index with hash of the data,
-// hash algorithm to use is determined by algo parameter.
-func ExtendPCR(index int, algo PCRHashAlgo, data []byte) error {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return err
-	}
-	defer tpm.Close()
-
-	pcrHashAlgo := getPCRAlgo(algo)
-	h := getPCRAlgo(algo).NewHash()
-	h.Write(data)
-
-	digest := tpm2.TaggedHashList{tpm2.MakeTaggedHash(pcrHashAlgo, h.Sum(nil))}
-	return tpm.PCRExtend(tpm.PCRHandleContext(index), digest, nil)
-}
-
-// ResetPCR resets PCR value at the provide index, this only works on indexes
-// 16 and 23, as per spec, other indexes are not resettable.
-func ResetPCR(index int) error {
-	if index == 16 || index == 23 {
-		tpm, err := getTpmHandle()
-		if err != nil {
-			return err
-		}
-		defer tpm.Close()
-
-		return tpm.PCRReset(tpm.PCRHandleContext(index), nil)
-	}
-
-	return errors.New("only PCR indexes 16 and 23 are resettable")
-}
-
-// ReadPCRs will read the value of PCR indexes provided by pcrs argument,
-// the algo defines which banks should be read (e.g SHA1 or SHA256).
-func ReadPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return PCRList{}, err
-	}
-	defer tpm.Close()
-
-	pcrHashAlgo := getPCRAlgo(algo)
-	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
-	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
-	if err != nil {
-		return PCRList{}, err
-	}
-
-	pcrList := PCRList{Algo: algo, Pcrs: make(PCRS, 0)}
-	for i, val := range pcrsValue[pcrHashAlgo] {
-		pcrList.Pcrs = append(pcrList.Pcrs, PCR{i, val})
-	}
-
-	return pcrList, nil
 }
 
 // DefineMonotonicCounter will define a monotonic NV counter at the given index,
