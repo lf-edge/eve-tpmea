@@ -2,9 +2,14 @@ package tpmea
 
 import (
 	"bytes"
+	crand "crypto/rand"
+	"crypto/rsa"
+	"errors"
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/canonical/go-tpm2"
 )
 
 const (
@@ -15,8 +20,71 @@ const (
 
 var PCR_INDEXES = []int{0, 1, 2, 3, 4, 5}
 
+// genTpmKeyPair generates a 2048 bit RSA key,
+// 2048 bits is the limit for TPM.
+func genTpmKeyPair() (*rsa.PrivateKey, error) {
+	return rsa.GenerateKey(crand.Reader, 2048)
+}
+
+// extendPCR extends the provided PCR index with hash of the data,
+// hash algorithm to use is determined by algo parameter.
+func extendPCR(index int, algo PCRHashAlgo, data []byte) error {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return err
+	}
+	defer tpm.Close()
+
+	pcrHashAlgo := getPCRAlgo(algo)
+	h := getPCRAlgo(algo).NewHash()
+	h.Write(data)
+
+	digest := tpm2.TaggedHashList{tpm2.MakeTaggedHash(pcrHashAlgo, h.Sum(nil))}
+	return tpm.PCRExtend(tpm.PCRHandleContext(index), digest, nil)
+}
+
+// resetPCR resets PCR value at the provide index, this only works on indexes
+// 16 and 23, as per spec, other indexes are not resettable.
+func resetPCR(index int) error {
+	if index == 16 || index == 23 {
+		tpm, err := getTpmHandle()
+		if err != nil {
+			return err
+		}
+		defer tpm.Close()
+
+		return tpm.PCRReset(tpm.PCRHandleContext(index), nil)
+	}
+
+	return errors.New("only PCR indexes 16 and 23 are resettable")
+}
+
+// readPCRs will read the value of PCR indexes provided by pcrs argument,
+// the algo defines which banks should be read (e.g SHA1 or SHA256).
+func readPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return PCRList{}, err
+	}
+	defer tpm.Close()
+
+	pcrHashAlgo := getPCRAlgo(algo)
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
+	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
+	if err != nil {
+		return PCRList{}, err
+	}
+
+	pcrList := PCRList{Algo: algo, Pcrs: make(PCRS, 0)}
+	for i, val := range pcrsValue[pcrHashAlgo] {
+		pcrList.Pcrs = append(pcrList.Pcrs, PCR{i, val})
+	}
+
+	return pcrList, nil
+}
+
 func TestGenerateAuthDigest(t *testing.T) {
-	key, _ := GenKeyPair()
+	key, _ := genTpmKeyPair()
 	_, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -24,24 +92,24 @@ func TestGenerateAuthDigest(t *testing.T) {
 }
 
 func TestReadPCRs(t *testing.T) {
-	_, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	_, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 }
 
 func TestPCRReset(t *testing.T) {
-	err := ExtendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+	err := extendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	err = ResetPCR(RESETABLE_PCR_INDEX)
+	err = resetPCR(RESETABLE_PCR_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	afterResetPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
+	afterResetPcrs, err := readPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -54,17 +122,17 @@ func TestPCRReset(t *testing.T) {
 }
 
 func TestPCRExtend(t *testing.T) {
-	beforeExtendPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
+	beforeExtendPcrs, err := readPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	err = ExtendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+	err = extendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	afterExtendPcrs, err := ReadPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
+	afterExtendPcrs, err := readPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -93,7 +161,7 @@ func TestMonotonicCounter(t *testing.T) {
 }
 
 func TestSimpleSealUnseal(t *testing.T) {
-	key, _ := GenKeyPair()
+	key, _ := genTpmKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -102,13 +170,13 @@ func TestSimpleSealUnseal(t *testing.T) {
 	// since this should run on a emulated TPM, we might start will PCR values
 	// being zero, so extend them to non-zero first.
 	for _, index := range PCR_INDEXES {
-		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
 			t.Fatalf("Expected no error, got  \"%v\"", err)
 		}
 	}
 
-	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -146,7 +214,7 @@ func TestSimpleSealUnseal(t *testing.T) {
 }
 
 func TestMutablePolicySealUnseal(t *testing.T) {
-	key, _ := GenKeyPair()
+	key, _ := genTpmKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -155,13 +223,13 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 	// since this should run on a emulated TPM, we might start will PCR values
 	// being zero, so extend them to non-zero first.
 	for _, index := range PCR_INDEXES {
-		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
 			t.Fatalf("Expected no error, got  \"%v\"", err)
 		}
 	}
 
-	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -199,12 +267,12 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
-	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
+	err = extendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err = readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -247,7 +315,7 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 }
 
 func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
-	key, _ := GenKeyPair()
+	key, _ := genTpmKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -256,7 +324,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	// since this should run on a emulated TPM, we might start will PCR values
 	// being zero, so extend them to non-zero first.
 	for _, index := range PCR_INDEXES {
-		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
 			t.Fatalf("Expected no error, got  \"%v\"", err)
 		}
@@ -268,7 +336,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 	}
 	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 
-	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -306,12 +374,12 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
-	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
+	err = extendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err = readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -392,7 +460,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 }
 
 func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
-	oldKey, _ := GenKeyPair()
+	oldKey, _ := genTpmKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&oldKey.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -401,7 +469,7 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 	// since this should run on a emulated TPM, we might start will PCR values
 	// being zero, so extend them to non-zero first.
 	for _, index := range PCR_INDEXES {
-		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
 			t.Fatalf("Expected no error, got  \"%v\"", err)
 		}
@@ -413,7 +481,7 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 	}
 	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 
-	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -435,7 +503,7 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	newKey, _ := GenKeyPair()
+	newKey, _ := genTpmKeyPair()
 	newkeySig, newAuthDigest, approvedPolicyNewSig, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -473,12 +541,12 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
-	err = ExtendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
+	err = extendPCR(pick, AlgoSHA256, []byte("EXTEND_DATA_TWO"))
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	pcrs, err = ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err = readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -559,7 +627,7 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 }
 
 func TestReadLocking(t *testing.T) {
-	key, _ := GenKeyPair()
+	key, _ := genTpmKeyPair()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -568,13 +636,13 @@ func TestReadLocking(t *testing.T) {
 	// since this should run on a emulated TPM, we might start will PCR values
 	// being zero, so extend them to non-zero first.
 	for _, index := range PCR_INDEXES {
-		err = ExtendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
 			t.Fatalf("Expected no error, got  \"%v\"", err)
 		}
 	}
 
-	pcrs, err := ReadPCRs(PCR_INDEXES, AlgoSHA256)
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
