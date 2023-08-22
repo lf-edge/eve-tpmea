@@ -80,7 +80,7 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
+func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySig []byte, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
 	public := newExternalRSAPub(key)
 
 	// null-hierarchy won't produce a valid ticket, go with owner
@@ -91,8 +91,9 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byt
 	defer tpm.FlushContext(keyCtx)
 
 	// approvedPolicy by itself is a digest, but approvedPolicySignature is a
-	// signature over digest of approvedPolicy, so compute it first.
-	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPol, nil)
+	// signature over digest of approvedPolicy (signature over digest of digest),
+	// so compute it first.
+	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, approvedPolicy, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -103,15 +104,15 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byt
 		Signature: &tpm2.SignatureU{
 			RSASSA: &tpm2.SignatureRSASSA{
 				Hash: tpm2.HashAlgorithmSHA256,
-				Sig:  approvedPolSig}}}
+				Sig:  approvedPolicySig}}}
 	ticket, err := tpm.VerifySignature(keyCtx, approvedPolicyDigest, &signature)
 	if err != nil {
 		return nil, err
 	}
 
 	// start a policy session, a policy session will actually evaluate commands
-	// in comparison to trial policy that only computes the final digest no matter
-	// if run-time state doesn't match the provided state or not.
+	// in comparison to trial policy that only computes the final digest whether
+	// run-time state match the provided state or not.
 	polss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
 	if err != nil {
 		return nil, err
@@ -141,7 +142,7 @@ func authorizeObject(tpm *tpm2.TPMContext, key *rsa.PublicKey, approvedPol []byt
 
 	// authorize policy will check if policies hold at runtime (i.e PCR values
 	// match the expected value and counter holds true on the arithmetic op)
-	err = tpm.PolicyAuthorize(polss, approvedPol, nil, keyCtx.Name(), ticket)
+	err = tpm.PolicyAuthorize(polss, approvedPolicy, nil, keyCtx.Name(), ticket)
 	if err != nil {
 		return nil, err
 	}
@@ -165,19 +166,19 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err == nil {
-		// handle already exists, check if the attributes match what we need,
-		// is so, we just use it.
+		// probably handle already exists, read its attributes.
 		nvpub, _, err := tpm.NVReadPublic(index)
 		if err != nil {
 			return 0, err
 		}
 
+		// check if the attributes match what we need, is so, just use the handle.
 		attr := tpm2.AttrNVOwnerRead | tpm2.AttrNVOwnerWrite
 		if (nvpub.Attrs & attr) != attr {
 			return 0, errors.New("a counter at provide handle already exists with mismatched attributes")
 		}
 
-		// if it is not initialized, initialize it.
+		// if it's not initialized, initialize it by increasing it.
 		if (nvpub.Attrs & tpm2.AttrNVWritten) != tpm2.AttrNVWritten {
 			err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
 			if err != nil {
@@ -193,6 +194,7 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 		return counter, nil
 	}
 
+	// handle doesn't exists, create it with desired attributes.
 	nvpub := tpm2.NVPublic{
 		Index:   tpm2.Handle(handle),
 		NameAlg: tpm2.HashAlgorithmSHA256,
@@ -203,7 +205,7 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 		return 0, err
 	}
 
-	// this is necessary to initialize the counter.
+	// increasing the counter is necessary to initialize it.
 	err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
 	if err != nil {
 		return 0, err
@@ -213,7 +215,7 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 }
 
 // IncreaseMonotonicCounter will increase the value of the monotonic counter at
-// provided index, by one.
+// provided index, by one and returns the new value.
 func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -239,128 +241,8 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 	return counter, nil
 }
 
-// GenerateAuthDigest will generate a authorization digest based on the provided
-// public key. The returned authorizationDigest is the basis for creating mutable
-// TPM policies.
-//
-// It is not necessary to run this function on a real TPM, running it on a
-// true-to-spec emulator like swtpm will work.
-//
-// This function should be called in the server side  (attester, Challenger, etc).
-func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.Close()
-
-	public := newExternalRSAPub(key)
-	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleNull)
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.FlushContext(keyCtx)
-
-	// we generate the auth digest in a trial session, no evaluation in TPM is
-	// required, we are only interested in the final session digest
-	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.FlushContext(triss)
-
-	// ask TPM to compute the session digest and retrieve it
-	err = tpm.PolicyAuthorize(triss, nil, nil, keyCtx.Name(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return tpm.PolicyGetDigest(triss)
-}
-
-// GenerateSignedPolicy will compute the digest of PolicyNV and PolicyPCR and
-// signs it using the provided key. It will return the approvedPolicy which
-// represent the run-time state that the target TPM should match (i.e PCR values),
-// and approvedPolicySignature which is the signature of the approvedPolicy that gets
-// validated on the target TPM to match the key which is used to generate
-// authorizationDigest from GenerateAuthDigest().
-//
-// The private key must be belong to the pair that is used with GenerateAuthDigest.
-//
-// It is not necessary to run this function on a real TPM, running it on a
-// true-to-spec emulator like swtpm will work.
-//
-// This function should be called in the server side (attester, Challenger, etc).
-func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (approvedPol []byte, approvedPolSig []byte, err error) {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.Close()
-
-	// we generate the policy digest in a trial session, because we don't want to
-	// evaluate the provided state, we are only interested in the final session
-	// digest that is computed as result of executing TPM commands, here PolicyNV and PolicyPCR.
-	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.FlushContext(triss)
-
-	if rbp != (RBP{}) {
-		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
-		if err != nil {
-			return nil, nil, err
-		}
-
-		operandB := make([]byte, 8)
-		binary.BigEndian.PutUint64(operandB, rbp.Check)
-		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, triss, operandB, 0, tpm2.OpUnsignedLE, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	sel := make([]int, 0)
-	digests := make(map[int]tpm2.Digest)
-	for _, pcr := range pcrList.Pcrs {
-		sel = append(sel, pcr.Index)
-		digests[pcr.Index] = pcr.Digest
-	}
-
-	pcrHashAlgo := getPCRAlgo(pcrList.Algo)
-	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel}}
-	pcrValues := tpm2.PCRValues{pcrHashAlgo: digests}
-	pcrDigests, err := policyutil.ComputePCRDigest(pcrHashAlgo, pcrSelections, pcrValues)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	err = tpm.PolicyPCR(triss, pcrDigests, pcrSelections)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// get the final session digest from TPM
-	policyDigest, err := tpm.PolicyGetDigest(triss)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// PolicyAuthorize from util is not executing any TPM commands, it just
-	// computes digest of policyDigest and signs it with provided key, bad
-	// naming on the go-tpm2.
-	scheme := tpm2.SigScheme{
-		Scheme: tpm2.SigSchemeAlgRSASSA,
-		Details: &tpm2.SigSchemeU{
-			RSASSA: &tpm2.SigSchemeRSASSA{
-				HashAlg: tpm2.HashAlgorithmSHA256}}}
-	_, s, err := util.PolicyAuthorize(key, &scheme, policyDigest, nil)
-	return policyDigest, s.Signature.RSASSA.Sig, err
-}
-
 // SealSecret will write the provide secret to the TPM. The authDigest parameter
-// binds the unseal operation with valid and singed policy.
+// binds the unseal operation with a singed policy that must gold true at run-time.
 func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	tpm, err := getTpmHandle()
 	if err != nil {
@@ -393,18 +275,17 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 }
 
 // UnsealSecret will read the secret from the TPM. To read the secret the
-// approvedPolicy and approvedPolicySignature (result of GenerateSignedPolicy)
-// most be provided, plus the actual PolicyPCR and PolicyNV that will get evaluated
-// at run time in TPM. If approvedPolicy is signed with the valid key and provided
-// TPM states matches the run-time state of the TPM, the secret is returned.
-func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) ([]byte, error) {
+// approvedPolicy and approvedPolicySignature must be provided.
+// If approvedPolicy is signed with the valid key and provided TPM states
+// matches the run-time state of the TPM, the secret is returned.
+func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySig []byte, pcrs []int, rbp RBP) ([]byte, error) {
 	tpm, err := getTpmHandle()
 	if err != nil {
 		return nil, err
 	}
 	defer tpm.Close()
 
-	// don't bother authorizing, if the handle is not valid
+	// if the handle is not valid don't bother authorizing.
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err != nil {
 		return nil, err
@@ -412,12 +293,13 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approve
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, key, approvedPol, approvedPolSig, pcrs, rbp)
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySig, pcrs, rbp)
 	if err != nil {
 		return nil, err
 	}
 	defer tpm.FlushContext(polss)
 
+	// read the public area of NV to find out its size.
 	pub, _, err := tpm.NVReadPublic(index)
 	if err != nil {
 		return nil, err
@@ -426,14 +308,166 @@ func UnsealSecret(handle uint32, key *rsa.PublicKey, approvedPol []byte, approve
 	return tpm.NVRead(index, index, pub.Size, 0, polss)
 }
 
-// RotateAuthDigestKey generates signs the new auth public key using the old one,
-// and generates a new Authorization Digest using new key.
+// ActivateReadLock prevents further reading of the data from provided index,
+// this restriction will gets deactivated on next tpm reset or restart.
+func ActivateReadLock(handle uint32, key *rsa.PublicKey, approvedPolicy []byte, approvedPolicySig []byte, pcrs []int, rbp RBP) error {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return err
+	}
+	defer tpm.Close()
+
+	// don't bother authorizing, if the handle is not valid
+	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
+	if err != nil {
+		return err
+	}
+
+	// perform the TPM commands in order, this will work only if policy signature
+	// is valid and session digest matches the auth (saved) digest of the object.
+	polss, err := authorizeObject(tpm, key, approvedPolicy, approvedPolicySig, pcrs, rbp)
+	if err != nil {
+		return err
+	}
+	defer tpm.FlushContext(polss)
+
+	return tpm.NVReadLock(index, index, polss)
+}
+
+// GenerateAuthDigest will generate a authorization digest based on the provided
+// public key. The returned authorizationDigest is the basis for creating mutable
+// TPM policies.
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side (attester, Challenger, etc).
+func GenerateAuthDigest(key *rsa.PublicKey) (authDigest tpm2.Digest, err error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.Close()
+
+	// we generate the auth digest in a trial session, trial session won't
+	// evaluate the states of TPM and we can get the final session digest
+	// regardless of TPM state.
+	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.FlushContext(triss)
+
+	// load the public key into TPM
+	public := newExternalRSAPub(key)
+	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleNull)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.FlushContext(keyCtx)
+
+	// ask TPM to compute the session digest.
+	err = tpm.PolicyAuthorize(triss, nil, nil, keyCtx.Name(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// retrieve the session digest.
+	return tpm.PolicyGetDigest(triss)
+}
+
+// GenerateSignedPolicy will compute the digest of PolicyNV and PolicyPCR and
+// signs it using the provided key. It will return the approvedPolicy which
+// represent the run-time state that the target TPM should match (i.e PCR values),
+// and approvedPolicySignature which is the signature of the approvedPolicy that gets
+// validated on the target TPM to match the key which is used to generate
+// authorizationDigest from the call to GenerateAuthDigest.
+//
+// The private key must be belong to the pair that is used with GenerateAuthDigest.
+//
+// It is not necessary to run this function on a real TPM, running it on a
+// true-to-spec emulator like swtpm will work.
+//
+// This function should be called in the server side (attester, Challenger, etc).
+func GenerateSignedPolicy(key *rsa.PrivateKey, pcrList PCRList, rbp RBP) (approvedPolicy []byte, approvedPolicySig []byte, err error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.Close()
+
+	// we generate the policy digest in a trial session, because we don't want to
+	// evaluate the provided state, we are only interested in the final session
+	// digest that is computed as result of executing TPM commands, here the
+	// commands are PolicyNV and PolicyPCR.
+	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.FlushContext(triss)
+
+	if rbp != (RBP{}) {
+		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// PolicyNV : index value <= operandB
+		operandB := make([]byte, 8)
+		binary.BigEndian.PutUint64(operandB, rbp.Check)
+		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, triss, operandB, 0, tpm2.OpUnsignedLE, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	sel := make([]int, 0)
+	digests := make(map[int]tpm2.Digest)
+	for _, pcr := range pcrList.Pcrs {
+		sel = append(sel, pcr.Index)
+		digests[pcr.Index] = pcr.Digest
+	}
+
+	pcrHashAlgo := getPCRAlgo(pcrList.Algo)
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel}}
+	pcrValues := tpm2.PCRValues{pcrHashAlgo: digests}
+	pcrDigests, err := policyutil.ComputePCRDigest(pcrHashAlgo, pcrSelections, pcrValues)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// PolicyPCR: runtime PCRs == pcrList
+	err = tpm.PolicyPCR(triss, pcrDigests, pcrSelections)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// get the final session digest from TPM.
+	policyDigest, err := tpm.PolicyGetDigest(triss)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// util.PolicyAuthorize is not executing PolicyAuthorize TPM commands, it
+	// just computes digest of policyDigest and signs it with provided key, bad
+	// naming on the go-tpm2.
+	scheme := tpm2.SigScheme{
+		Scheme: tpm2.SigSchemeAlgRSASSA,
+		Details: &tpm2.SigSchemeU{
+			RSASSA: &tpm2.SigSchemeRSASSA{
+				HashAlg: tpm2.HashAlgorithmSHA256}}}
+	_, s, err := util.PolicyAuthorize(key, &scheme, policyDigest, nil)
+	return policyDigest, s.Signature.RSASSA.Sig, err
+}
+
+// rotateAuthDigestKey signs the new auth public key using the old one,
+// and generates a new Authorization Digest using the new auth key.
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side  (attester, Challenger, etc).
-func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeySig []byte, newAuthDigest tpm2.Digest, err error) {
+func rotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newKeySig []byte, newAuthDigest tpm2.Digest, err error) {
 	message, err := json.Marshal(newKey)
 	if err != nil {
 		return nil, nil, err
@@ -468,12 +502,13 @@ func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeyS
 	}
 	defer tpm.FlushContext(triss)
 
-	// ask TPM to compute the session digest and retrieve it
+	// ask TPM to compute the session digest.
 	err = tpm.PolicyAuthorize(triss, nil, nil, keyCtx.Name(), nil)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// retrieve it the session digest.
 	digest, err := tpm.PolicyGetDigest(triss)
 	if err != nil {
 		return nil, nil, err
@@ -482,31 +517,32 @@ func RotateAuthDigestKey(oldKey *rsa.PrivateKey, newKey *rsa.PublicKey) (newkeyS
 	return signature, digest, nil
 }
 
-// RotateAuthDigestWithPolicy will first do a RotateAuthDigestKey and then
-// signs the policy using new key
+// RotateAuthDigestWithPolicy will first signs the new auth public key using
+// the old one and generates a new Authorization Digest using the new auth key,
+// then signs the policy using new key.
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side  (attester, Challenger, etc).
-func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newkeySig []byte, newAuthDigest tpm2.Digest, approvedPolNewSig []byte, err error) {
-	newkeySig, newAuthDigest, err = RotateAuthDigestKey(oldKey, &newKey.PublicKey)
+func RotateAuthDigestWithPolicy(oldKey *rsa.PrivateKey, newKey *rsa.PrivateKey, pcrList PCRList, rbp RBP) (newKeySig []byte, newAuthDigest tpm2.Digest, approvedPolicyNewSig []byte, err error) {
+	newKeySig, newAuthDigest, err = rotateAuthDigestKey(oldKey, &newKey.PublicKey)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	_, approvedPolNewSig, err = GenerateSignedPolicy(newKey, pcrList, rbp)
+	_, approvedPolicyNewSig, err = GenerateSignedPolicy(newKey, pcrList, rbp)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	return newkeySig, newAuthDigest, approvedPolNewSig, nil
+	return newKeySig, newAuthDigest, approvedPolicyNewSig, nil
 }
 
-// VerifyAuthDigestRotation verifies that the new key signed by the old key,
+// VerifyNewAuthDigest verifies that the new key signed by the old key,
 // this is needed when the target TPM is doing a Authorization Digest rotation
 // using a new key.
-func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte) error {
+func VerifyNewAuthDigest(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newKeySig []byte) error {
 	message, err := json.Marshal(newKey)
 	if err != nil {
 		return err
@@ -515,15 +551,15 @@ func VerifyAuthDigestRotation(oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newk
 	sh := crypto.SHA256.New()
 	sh.Write(message)
 	hash := sh.Sum(nil)
-	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newkeySig)
+	return rsa.VerifyPKCS1v15(oldKey, crypto.SHA256, hash, newKeySig)
 }
 
-// ResealSecretWithNewAuthDigestWithSecret will first validates the new key
-// by calling VerifyAuthDigestRotation, then reseals the secret using the new
+// SealSecretWithNewAuthDigest will first validates the new key
+// by calling VerifyNewAuthDigest, then reseals the secret using the new
 // Authorization Digest that is bind to the new key, meaning subsequent unseal
 // operations require policies that are signed with the new key.
-func ResealSecretWithNewAuthDigestWithSecret(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
-	err := VerifyAuthDigestRotation(oldKey, newKey, newkeySig)
+func SealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
+	err := VerifyNewAuthDigest(oldKey, newKey, newKeySig)
 	if err != nil {
 		return err
 	}
@@ -531,41 +567,15 @@ func ResealSecretWithNewAuthDigestWithSecret(handle uint32, oldKey *rsa.PublicKe
 	return SealSecret(handle, newAuthDigest, secret)
 }
 
-// ResealSecretWithNewAuthDigest unseals the secret using old key and policies,
+// ResealTpmSecretWithNewAuthDigest unseals the secret using old key and policies,
 // then validation and key resealing using ResealSecretWithNewAuthDigestWithSecret.
 // check out ResealSecretWithNewAuthDigestWithSecret for more information.
-func ResealSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newkeySig []byte, newAuthDigest tpm2.Digest, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
+func ResealTpmSecretWithNewAuthDigest(handle uint32, oldKey *rsa.PublicKey, newKey *rsa.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, approvedPolicy []byte, approvedPolicySig []byte, pcrs []int, rbp RBP) error {
 
-	secret, err := UnsealSecret(handle, oldKey, approvedPol, approvedPolSig, pcrs, rbp)
+	secret, err := UnsealSecret(handle, oldKey, approvedPolicy, approvedPolicySig, pcrs, rbp)
 	if err != nil {
 		return err
 	}
 
-	return ResealSecretWithNewAuthDigestWithSecret(handle, oldKey, newKey, newkeySig, newAuthDigest, secret)
-}
-
-// ActivateReadLock prevents further reading of the data from provided index,
-// this restriction will gets deactivated on next tpm reset or restart.
-func ActivateReadLock(handle uint32, key *rsa.PublicKey, approvedPol []byte, approvedPolSig []byte, pcrs []int, rbp RBP) error {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return err
-	}
-	defer tpm.Close()
-
-	// don't bother authorizing, if the handle is not valid
-	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
-	if err != nil {
-		return err
-	}
-
-	// perform the TPM commands in order, this will work only if policy signature
-	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, key, approvedPol, approvedPolSig, pcrs, rbp)
-	if err != nil {
-		return err
-	}
-	defer tpm.FlushContext(polss)
-
-	return tpm.NVReadLock(index, index, polss)
+	return SealSecretWithNewAuthDigest(handle, oldKey, newKey, newKeySig, newAuthDigest, secret)
 }

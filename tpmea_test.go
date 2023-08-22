@@ -167,8 +167,8 @@ func TestSimpleSealUnseal(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	// since this should run on a emulated TPM, we might start will PCR values
-	// being zero, so extend them to non-zero first.
+	// since this should run on a emulated TPM, we might start with PCR values
+	// being zero, so extend them to a non-zero value first.
 	for _, index := range PCR_INDEXES {
 		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
@@ -220,8 +220,8 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	// since this should run on a emulated TPM, we might start will PCR values
-	// being zero, so extend them to non-zero first.
+	// since this should run on a emulated TPM, we might start with PCR values
+	// being zero, so extend them to a non-zero value first.
 	for _, index := range PCR_INDEXES {
 		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
@@ -284,8 +284,12 @@ func TestMutablePolicySealUnseal(t *testing.T) {
 		approvedPolicySignature,
 		PCR_INDEXES,
 		RBP{})
-	if err == nil {
-		t.Fatalf("Expected error, got nothing!")
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
+			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
+		}
+	} else {
+		t.Fatalf("Expected TPM_RC_VALUE error, got nil")
 	}
 
 	sealingPcrs = make(PCRS, 0)
@@ -321,8 +325,8 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	// since this should run on a emulated TPM, we might start will PCR values
-	// being zero, so extend them to non-zero first.
+	// since this should run on a emulated TPM, we might start with PCR values
+	// being zero, so extend them to a non-zero value first.
 	for _, index := range PCR_INDEXES {
 		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
@@ -391,8 +395,12 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
-	if err == nil {
-		t.Fatalf("Expected error, got nothing!")
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
+			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
+		}
+	} else {
+		t.Fatalf("Expected TPM_RC_VALUE error, got nil")
 	}
 
 	sealingPcrs = make(PCRS, 0)
@@ -420,7 +428,7 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
-	// not lets increase the counter
+	// now lets increase the counter
 	rbpCounter, err = IncreaseMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -433,8 +441,12 @@ func TestMutablePolicySealUnsealWithRollbackProtection(t *testing.T) {
 		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
-	if err == nil {
-		t.Fatalf("Expected error, got nothing!")
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
+			t.Fatalf("Expected TPM_RC_POLICY error, got  \"%v\"", err)
+		}
+	} else {
+		t.Fatalf("Expected TPM_RC_POLICY error, got nil")
 	}
 
 	// update the policy and try again
@@ -466,8 +478,8 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	// since this should run on a emulated TPM, we might start will PCR values
-	// being zero, so extend them to non-zero first.
+	// since this should run on a emulated TPM, we might start with PCR values
+	// being zero, so extend them to a non-zero value first.
 	for _, index := range PCR_INDEXES {
 		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
@@ -479,7 +491,6 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
-	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 
 	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
@@ -490,8 +501,9 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 	for _, index := range PCR_INDEXES {
 		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
 	}
-	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
+	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
 	approvedPolicy, approvedPolicySignature, err := GenerateSignedPolicy(oldKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -509,7 +521,7 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	err = ResealSecretWithNewAuthDigest(NV_INDEX,
+	err = ResealTpmSecretWithNewAuthDigest(NV_INDEX,
 		&oldKey.PublicKey,
 		&newKey.PublicKey,
 		newkeySig,
@@ -558,8 +570,12 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
-	if err == nil {
-		t.Fatalf("Expected error, got nothing!")
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
+			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
+		}
+	} else {
+		t.Fatalf("Expected TPM_RC_VALUE error, got nil")
 	}
 
 	sealingPcrs = make(PCRS, 0)
@@ -600,8 +616,12 @@ func TestMutablePolicySealUnsealWithKeyRotation(t *testing.T) {
 		approvedPolicySignature,
 		PCR_INDEXES,
 		rbp)
-	if err == nil {
-		t.Fatalf("Expected error, got nothing!")
+	if err != nil {
+		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
+			t.Fatalf("Expected TPM_RC_POLICY error, got  \"%v\"", err)
+		}
+	} else {
+		t.Fatalf("Expected TPM_RC_POLICY error, got nil")
 	}
 
 	// update the policy and try again
@@ -633,8 +653,8 @@ func TestReadLocking(t *testing.T) {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	// since this should run on a emulated TPM, we might start will PCR values
-	// being zero, so extend them to non-zero first.
+	// since this should run on a emulated TPM, we might start with PCR values
+	// being zero, so extend them to a non-zero value first.
 	for _, index := range PCR_INDEXES {
 		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 		if err != nil {
@@ -699,5 +719,7 @@ func TestReadLocking(t *testing.T) {
 		if strings.Contains(err.Error(), "TPM_RC_NV_LOCKED") != true {
 			t.Fatalf("Expected TPM_RC_NV_LOCKED error, got  \"%v\"", err)
 		}
+	} else {
+		t.Fatalf("Expected TPM_RC_NV_LOCKED error, got  nil")
 	}
 }
