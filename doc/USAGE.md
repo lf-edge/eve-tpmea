@@ -64,18 +64,18 @@ counter, err = IncreaseMonotonicCounter(0x1500017)
 Client must validate `approvedPolicySignature` signature using the `key.PublicKey` before replacing any old policy. After update Client should be able to read back the secret with a new policy that matches the new system state.
 
 ## Rotating the Signing Key
-To rotate the signing key, using the old key, sign the new key and generate a new Authorization Digest based on the new key and send the `newKey.PublicKey`, `newAuthDigest` and `approvedPolicyNewSig` to the client.
+To rotate the signing key you can either have your own verification logic for the new public key and just use the same logic described in "Generating Mutable Policies" or use the old key to create a signing chain (this might be problematic if devices lost connection with the controller and you retire the old keys). To do this, simply sign the new key and generate a new Authorization Digest based on the new key and send the `newKey.PublicKey`, `newAuthDigest` and `approvedPolicyNewSig` to the client.
 
 ```go
 newKey, _ := GenKeyPair()
 newkeySig, newAuthDigest, approvedPolicyNewSig, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, rbp)
 ```
 
- After receiving the new key and signature, by calling `ResealSecretWithNewAuthDigest` client verifiers the new key is signed with the old key and then reseals the secret using the new Authorization Digest which is bound to new key:
+ After receiving the new key and signature, by calling `ResealTpmSecretWithVerifiedAuthDigest` client verifiers the new key is signed with the old key and then reseals the secret using the new Authorization Digest which is bound to new key:
 
 ```go
 rbp := RBP{Counter: 0x1500017, Check: 2}
-err = ResealSecretWithNewAuthDigest(0x1500016,
+err = ResealTpmSecretWithVerifiedAuthDigest(0x1500016,
     &oldKey.PublicKey,
     &newKey.PublicKey,
     newkeySig,

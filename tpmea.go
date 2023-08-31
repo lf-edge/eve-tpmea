@@ -580,14 +580,14 @@ func hashPublicKey(publicKey crypto.PublicKey) ([]byte, error) {
 	return sh.Sum(nil), nil
 }
 
-// rotateAuthDigestKey signs the new auth public key using the old one,
+// rotateAuthDigestKeyWithKeySigning signs the new auth public key using the old one,
 // and generates a new Authorization Digest using the new auth key.
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side  (attester, Challenger, etc).
-func rotateAuthDigestKey(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey) (newSignature []byte, newAuthDigest tpm2.Digest, err error) {
+func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey) (newSignature []byte, newAuthDigest tpm2.Digest, err error) {
 	var public tpm2.Public
 	var signature []byte
 	switch p := oldPrivateKey.(type) {
@@ -667,7 +667,7 @@ func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey c
 		return nil, nil, nil, fmt.Errorf("both old and new public keys have to be of same type")
 	}
 
-	newKeySig, newAuthDigest, err = rotateAuthDigestKey(oldPrivateKey, newPrivateKey)
+	newKeySig, newAuthDigest, err = rotateAuthDigestKeyWithKeySigning(oldPrivateKey, newPrivateKey)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -711,11 +711,11 @@ func VerifyNewAuthDigest(oldPublicKey crypto.PublicKey, newPublicKey crypto.Publ
 	}
 }
 
-// SealSecretWithNewAuthDigest will first validates the new key
+// SealSecretWithVerifiedAuthDigest will first validates the new key
 // by calling VerifyNewAuthDigest, then reseals the secret using the new
 // Authorization Digest that is bound to the new key, meaning subsequent unseal
 // operations require policies that are signed with the new key.
-func SealSecretWithNewAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
+func SealSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
 	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil || newAuthDigest == nil || secret == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
@@ -728,10 +728,10 @@ func SealSecretWithNewAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, n
 	return SealSecret(handle, newAuthDigest, secret)
 }
 
-// ResealTpmSecretWithNewAuthDigest unseals the secret using old key and policies,
+// ResealTpmSecretWithVerifiedAuthDigest unseals the secret using old key and policies,
 // then validation and key resealing using ResealSecretWithNewAuthDigestWithSecret.
 // check out ResealSecretWithNewAuthDigestWithSecret for more information.
-func ResealTpmSecretWithNewAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) error {
+func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) error {
 	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil || newAuthDigest == nil || policy == nil || policySig == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
@@ -741,5 +741,5 @@ func ResealTpmSecretWithNewAuthDigest(handle uint32, oldPublicKey crypto.PublicK
 		return err
 	}
 
-	return SealSecretWithNewAuthDigest(handle, oldPublicKey, newPublicKey, newKeySig, newAuthDigest, secret)
+	return SealSecretWithVerifiedAuthDigest(handle, oldPublicKey, newPublicKey, newKeySig, newAuthDigest, secret)
 }

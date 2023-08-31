@@ -583,7 +583,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	err = ResealTpmSecretWithNewAuthDigest(NV_INDEX,
+	err = ResealTpmSecretWithVerifiedAuthDigest(NV_INDEX,
 		oldPublicKey,
 		newPublicKey,
 		newKeySig,
