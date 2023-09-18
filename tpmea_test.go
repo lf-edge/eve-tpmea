@@ -794,3 +794,26 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		t.Fatalf("Expected TPM_RC_NV_LOCKED error, got  nil")
 	}
 }
+
+func TestReadNVAuthDigest(t *testing.T) {
+	key, _ := genTpmKeyPairECC()
+	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	writtenSecret := []byte("THIS_IS_VERY_SECRET")
+	err = SealSecret(NV_INDEX, authorizationDigest, writtenSecret)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	authPolicy, err := GetNVAuthDigest(NV_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	if bytes.Equal(authPolicy, authorizationDigest) != true {
+		t.Fatalf("Expected equal authPolicy and authorizationDigest, got %x != %x", authPolicy, authorizationDigest)
+	}
+}

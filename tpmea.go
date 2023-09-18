@@ -743,3 +743,23 @@ func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.Pu
 
 	return SealSecretWithVerifiedAuthDigest(handle, oldPublicKey, newPublicKey, newKeySig, newAuthDigest, secret)
 }
+
+func ReadNVAuthDigest(handle uint32) ([]byte, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.Close()
+
+	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
+	if err != nil {
+		return nil, err
+	}
+
+	info, _, err := tpm.NVReadPublic(index)
+	if err != nil {
+		return nil, err
+	}
+
+	return info.AuthPolicy, nil
+}
