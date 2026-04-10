@@ -648,7 +648,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	newKeySig, newAuthDigest, policyNewSig, err := RotateAuthDigestWithPolicy(oldPrivateKey, newPrivateKey, pcrs, rbp)
+	newKeySig, newAuthDigest, newPolicy, policyNewSig, err := RotateAuthDigestWithPolicy(oldPrivateKey, newPrivateKey, pcrs, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -669,7 +669,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 
 	readSecret, err := UnsealSecret(NV_INDEX,
 		newPublicKey,
-		policy,
+		newPolicy,
 		policyNewSig,
 		PCR_INDEXES,
 		AlgoSHA256,

@@ -756,26 +756,26 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side  (attester, Challenger, etc).
-func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (newKeySig []byte, newAuthDigest tpm2.Digest, policyNewSig *PolicySignature, err error) {
+func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (newKeySig []byte, newAuthDigest tpm2.Digest, newPolicy []byte, policyNewSig *PolicySignature, err error) {
 	if oldPrivateKey == nil || newPrivateKey == nil {
-		return nil, nil, nil, fmt.Errorf("invalid parameter(s)")
+		return nil, nil, nil, nil, fmt.Errorf("invalid parameter(s)")
 	}
 
 	if reflect.TypeOf(oldPrivateKey) != reflect.TypeOf(newPrivateKey) {
-		return nil, nil, nil, fmt.Errorf("both old and new public keys have to be of same type")
+		return nil, nil, nil, nil, fmt.Errorf("both old and new public keys have to be of same type")
 	}
 
 	newKeySig, newAuthDigest, err = rotateAuthDigestKeyWithKeySigning(oldPrivateKey, newPrivateKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	_, policyNewSig, err = GenerateSignedPolicy(newPrivateKey, pcrList, rbp)
+	newPolicy, policyNewSig, err = GenerateSignedPolicy(newPrivateKey, pcrList, rbp)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return newKeySig, newAuthDigest, policyNewSig, nil
+	return newKeySig, newAuthDigest, newPolicy, policyNewSig, nil
 }
 
 // VerifyNewAuthDigest verifies that the new key signed by the old key,
