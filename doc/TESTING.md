@@ -1,37 +1,13 @@
-# Testing and Development
-Testing can be done on emulated TPM, on ubuntu you can emulate a TPM by first installing swtpm and (optionally for debugging) tpm2-tools:
+# Testing
+
+The simplest way to run the tests is with the provided Docker script, which handles all dependencies (swtpm, libtpms, tpm2-tools) automatically:
 
 ```bash
-sudo apt-get install swtpm tpm2-tools
+bash test/run-in-docker.sh
 ```
 
-For the emulation, first load the `tpm_vtpm_proxy`:
+This builds a Ubuntu 22.04 container, compiles swtpm from source, provisions a software TPM, and runs the full test suite. No kernel modules or host-side TPM tooling are required. Pass `--no-cache` to force a clean image build:
 
 ```bash
-sudo modprobe tpm_vtpm_proxy
+bash test/run-in-docker.sh --no-cache
 ```
-
-Next install and compile the linux-vtpm-tests, `vtpmctrl` is required to glue `swtpm` and `tpm_vtpm_proxy` and created TPM char devices:
-
-```bash
-git clone https://github.com/stefanberger/linux-vtpm-tests.git
-cd linux-vtpm-tests
-./bootstrap.sh
-./configure
-make
-```
-
-Finally emulate the TPM:
-
-```bash
-vtpmctrl --tpm2 --spawn /bin/swtpm chardev --tpm2 --fd %fd --tpmstate dir=/tmp --flags not-need-init --locality allow-set-locality
-```
-
-You should see the TPM device available:
-
-```bash
-~$ ls /dev/tpm*
-/dev/tpm0  /dev/tpmrm0
-```
-
-now you can simply run the `tpmea` tests by invoking `go test -v`.
