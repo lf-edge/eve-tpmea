@@ -297,6 +297,7 @@ func testSimpleSealUnseal(t *testing.T, privateKey crypto.PrivateKey, publicKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -360,6 +361,7 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -387,6 +389,7 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
@@ -412,6 +415,7 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -480,6 +484,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -507,6 +512,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
@@ -532,6 +538,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -553,6 +560,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
@@ -574,6 +582,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -652,6 +661,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -662,6 +672,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policyNewSig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -692,6 +703,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
@@ -717,6 +729,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -738,6 +751,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
@@ -759,6 +773,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -821,6 +836,7 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -835,6 +851,7 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 
 	if err != nil {
@@ -846,6 +863,7 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		policy,
 		policySig,
 		PCR_INDEXES,
+		AlgoSHA256,
 		RBP{})
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_NV_LOCKED") != true {

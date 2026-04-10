@@ -202,7 +202,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 	return ticket, keyCtx, nil
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) (tpm2.SessionContext, error) {
+func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) (tpm2.SessionContext, error) {
 	ticket, keyCtx, err := verifyPolicySignature(tpm, publicKey, policy, policySig)
 	if err != nil {
 		return nil, err
@@ -241,7 +241,11 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 		}
 	}
 
-	pcrSelections := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: pcrs}}
+	pcrHashAlgo, err := getPCRAlgo(pcrAlgo)
+	if err != nil {
+		return nil, err
+	}
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
 	err = tpm.PolicyPCR(polss, nil, pcrSelections)
 	if err != nil {
 		return nil, err
@@ -410,7 +414,7 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 // approvedPolicy and approvedPolicySignature must be provided.
 // If approvedPolicy is signed with the valid key and provided TPM states
 // matches the run-time state of the TPM, the secret is returned.
-func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) ([]byte, error) {
+func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) ([]byte, error) {
 	if publicKey == nil || policy == nil || policySig == nil {
 		return nil, fmt.Errorf("invalid parameter(s)")
 	}
@@ -429,7 +433,7 @@ func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, poli
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, rbp)
+	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, pcrAlgo, rbp)
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +450,7 @@ func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, poli
 
 // ActivateReadLock prevents further reading of the data from provided index,
 // this restriction will gets deactivated on next tpm reset or restart.
-func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) error {
+func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) error {
 	if publicKey == nil || policy == nil || policySig == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
@@ -465,7 +469,7 @@ func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, policy []byte, 
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, rbp)
+	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, pcrAlgo, rbp)
 	if err != nil {
 		return err
 	}
@@ -818,12 +822,12 @@ func SealSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicK
 // ResealTpmSecretWithVerifiedAuthDigest unseals the secret using old key and policies,
 // then validation and key resealing using ResealSecretWithNewAuthDigestWithSecret.
 // check out ResealSecretWithNewAuthDigestWithSecret for more information.
-func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, policy []byte, policySig *PolicySignature, pcrs []int, rbp RBP) error {
+func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) error {
 	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil || newAuthDigest == nil || policy == nil || policySig == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
-	secret, err := UnsealSecret(handle, oldPublicKey, policy, policySig, pcrs, rbp)
+	secret, err := UnsealSecret(handle, oldPublicKey, policy, policySig, pcrs, pcrAlgo, rbp)
 	if err != nil {
 		return err
 	}
