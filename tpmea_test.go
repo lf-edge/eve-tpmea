@@ -153,6 +153,8 @@ func readPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	return pcrList, nil
 }
 
+// TestGenerateAuthDigest* verify that GenerateAuthDigest produces a digest for
+// both RSA and ECC public keys, and returns an error when given a nil key.
 func TestGenerateAuthDigestRSA(t *testing.T) {
 	key, _ := genTpmKeyPairRSA()
 	_, err := GenerateAuthDigest(&key.PublicKey)
@@ -176,6 +178,7 @@ func TestGenerateAuthDigestError(t *testing.T) {
 	}
 }
 
+// TestReadPCRs verifies that PCR values can be read from the TPM.
 func TestReadPCRs(t *testing.T) {
 	_, err := readPCRs(PCR_INDEXES, AlgoSHA256)
 	if err != nil {
@@ -183,6 +186,8 @@ func TestReadPCRs(t *testing.T) {
 	}
 }
 
+// TestPCRReset verifies that a resettable PCR (index 16) goes back to all-zeros
+// after a reset, even when it had previously been extended.
 func TestPCRReset(t *testing.T) {
 	err := extendPCR(RESETABLE_PCR_INDEX, AlgoSHA256, []byte("DATA_TO_EXTEND"))
 	if err != nil {
@@ -206,6 +211,7 @@ func TestPCRReset(t *testing.T) {
 	}
 }
 
+// TestPCRExtend verifies that extending a PCR changes its value.
 func TestPCRExtend(t *testing.T) {
 	beforeExtendPcrs, err := readPCRs([]int{RESETABLE_PCR_INDEX}, AlgoSHA256)
 	if err != nil {
@@ -229,6 +235,8 @@ func TestPCRExtend(t *testing.T) {
 	}
 }
 
+// TestMonotonicCounter verifies that a monotonic counter can be defined and
+// incremented, and that its value goes up by exactly one on each increment.
 func TestMonotonicCounter(t *testing.T) {
 	initCounter, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
 	if err != nil {
@@ -245,6 +253,9 @@ func TestMonotonicCounter(t *testing.T) {
 	}
 }
 
+// TestSimpleSealUnseal* verify the basic seal and unseal flow for both RSA and
+// ECC keys. A secret is sealed against the current PCR state and must be
+// recoverable using a matching signed policy.
 func TestSimpleSealUnsealRSA(t *testing.T) {
 	key, _ := genTpmKeyPairRSA()
 	testMutablePolicySealUnseal(t, key, &key.PublicKey)
@@ -303,6 +314,9 @@ func testSimpleSealUnseal(t *testing.T, privateKey crypto.PrivateKey, publicKey 
 	}
 }
 
+// TestMutablePolicySealUnseal* verify that a sealed secret is recoverable with
+// a valid policy, that unseal fails after a PCR changes, and that a freshly
+// signed policy covering the new PCR values restores access.
 func TestMutablePolicySealUnsealRSA(t *testing.T) {
 	key, _ := genTpmKeyPairRSA()
 	testMutablePolicySealUnseal(t, key, &key.PublicKey)
@@ -404,6 +418,9 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 	}
 }
 
+// TestMutablePolicySealUnsealWithRollbackProtection* verify that rollback
+// protection works: an old policy is rejected once the counter is incremented,
+// and a new policy bound to the updated counter value restores access.
 func TestMutablePolicySealUnsealWithRollbackProtectionRSA(t *testing.T) {
 	key, _ := genTpmKeyPairRSA()
 	testMutablePolicySealUnsealWithRollbackProtection(t, key, &key.PublicKey)
@@ -542,6 +559,10 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 	}
 }
 
+// TestMutablePolicySealUnsealWithKeyRotation* verify the full key rotation
+// flow: seal with the old key, rotate to a new key, reseal, and confirm the
+// secret is recoverable with the new key. Also checks that PCR and counter
+// policy enforcement still works correctly after the rotation.
 func TestMutablePolicySealUnsealWithKeyRotationRSA(t *testing.T) {
 	oldKey, _ := genTpmKeyPairRSA()
 	newKey, _ := genTpmKeyPairRSA()
@@ -701,6 +722,8 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 	}
 }
 
+// TestReadLocking* verify that ActivateReadLock blocks further reads from the
+// NV index until the next TPM reset, even when a valid policy is presented.
 func TestReadLockingRSA(t *testing.T) {
 	key, _ := genTpmKeyPairRSA()
 	testReadLocking(t, key, &key.PublicKey)
@@ -773,6 +796,8 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 	}
 }
 
+// TestReadNVAuthDigest verifies that ReadNVAuthDigest returns the same
+// Authorization Digest that was stored when the NV index was defined.
 func TestReadNVAuthDigest(t *testing.T) {
 	key, _ := genTpmKeyPairECC()
 	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
@@ -793,5 +818,250 @@ func TestReadNVAuthDigest(t *testing.T) {
 
 	if bytes.Equal(authPolicy, authorizationDigest) != true {
 		t.Fatalf("Expected equal authPolicy and authorizationDigest, got %x != %x", authPolicy, authorizationDigest)
+	}
+}
+
+// TestUnsealSecretWrongKey* verify that unsealing with a key that does not
+// match the Authorization Digest bound to the NV index is rejected.
+func TestUnsealSecretWrongKeyRSA(t *testing.T) {
+	correctKey, _ := genTpmKeyPairRSA()
+	wrongKey, _ := genTpmKeyPairRSA()
+	testUnsealSecretWrongKey(t, correctKey, &correctKey.PublicKey, &wrongKey.PublicKey)
+}
+
+func TestUnsealSecretWrongKeyECC(t *testing.T) {
+	correctKey, _ := genTpmKeyPairECC()
+	wrongKey, _ := genTpmKeyPairECC()
+	testUnsealSecretWrongKey(t, correctKey, &correctKey.PublicKey, &wrongKey.PublicKey)
+}
+
+func testUnsealSecretWrongKey(t *testing.T, privateKey crypto.PrivateKey, correctPublicKey crypto.PublicKey, wrongPublicKey crypto.PublicKey) {
+	authorizationDigest, err := GenerateAuthDigest(correctPublicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	for _, index := range PCR_INDEXES {
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		if err != nil {
+			t.Fatalf("Expected no error, got  \"%v\"", err)
+		}
+	}
+
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	sealingPcrs := make(PCRS, 0)
+	for _, index := range PCR_INDEXES {
+		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
+	}
+	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	err = SealSecret(NV_INDEX, authorizationDigest, []byte("THIS_IS_VERY_SECRET"))
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	_, err = UnsealSecret(NV_INDEX, wrongPublicKey, sp, sel, RBP{})
+	if err == nil {
+		t.Fatalf("Expected error when unsealing with wrong key, got nil")
+	}
+}
+
+// TestUnsealSecretTamperedSignature* verify that a corrupted policy digest
+// is rejected before the TPM evaluates any policy commands.
+func TestUnsealSecretTamperedSignatureRSA(t *testing.T) {
+	key, _ := genTpmKeyPairRSA()
+	testUnsealSecretTamperedSignature(t, key, &key.PublicKey)
+}
+
+func TestUnsealSecretTamperedSignatureECC(t *testing.T) {
+	key, _ := genTpmKeyPairECC()
+	testUnsealSecretTamperedSignature(t, key, &key.PublicKey)
+}
+
+func testUnsealSecretTamperedSignature(t *testing.T, privateKey crypto.PrivateKey, publicKey crypto.PublicKey) {
+	authorizationDigest, err := GenerateAuthDigest(publicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	for _, index := range PCR_INDEXES {
+		err = extendPCR(index, AlgoSHA256, []byte("DATA_TO_EXTEND"))
+		if err != nil {
+			t.Fatalf("Expected no error, got  \"%v\"", err)
+		}
+	}
+
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	sealingPcrs := make(PCRS, 0)
+	for _, index := range PCR_INDEXES {
+		sealingPcrs = append(sealingPcrs, PCR{Index: pcrs.Pcrs[index].Index, Digest: pcrs.Pcrs[index].Digest})
+	}
+	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
+
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	err = SealSecret(NV_INDEX, authorizationDigest, []byte("THIS_IS_VERY_SECRET"))
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	// corrupt the policy digest: the existing signature won't verify against it.
+	tamperedSP := SignedPolicy{
+		Sig:    sp.Sig,
+		Digest: make([]byte, len(sp.Digest)),
+	}
+	copy(tamperedSP.Digest, sp.Digest)
+	tamperedSP.Digest[0] ^= 0xff
+
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	_, err = UnsealSecret(NV_INDEX, publicKey, tamperedSP, sel, RBP{})
+	if err == nil {
+		t.Fatalf("Expected error when unsealing with tampered policy digest, got nil")
+	}
+}
+
+// TestSealSecretRejectsCounterHandle verifies that SealSecret refuses to
+// overwrite a monotonic counter NV index.
+func TestSealSecretRejectsCounterHandle(t *testing.T) {
+	_, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	err = SealSecret(NV_COUNTER_INDEX, bytes.Repeat([]byte{0x01}, 32), []byte("secret"))
+	if err == nil {
+		t.Fatalf("Expected error when sealing to counter handle, got nil")
+	}
+}
+
+// TestVerifyNewAuthDigestTamperedSignature* verify that a corrupted key
+// signature is rejected and cannot be used to install a rogue key.
+func TestVerifyNewAuthDigestTamperedSignatureRSA(t *testing.T) {
+	oldKey, _ := genTpmKeyPairRSA()
+	newKey, _ := genTpmKeyPairRSA()
+	testVerifyNewAuthDigestTamperedSignature(t, oldKey, newKey)
+}
+
+func TestVerifyNewAuthDigestTamperedSignatureECC(t *testing.T) {
+	oldKey, _ := genTpmKeyPairECC()
+	newKey, _ := genTpmKeyPairECC()
+	testVerifyNewAuthDigestTamperedSignature(t, oldKey, newKey)
+}
+
+func testVerifyNewAuthDigestTamperedSignature(t *testing.T, oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey) {
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	rotation, _, err := RotateAuthDigestWithPolicy(oldPrivateKey, newPrivateKey, pcrs, RBP{})
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	// corrupt the key signature by flipping a bit.
+	tamperedRotation := rotation
+	tamperedRotation.NewKeySig = make([]byte, len(rotation.NewKeySig))
+	copy(tamperedRotation.NewKeySig, rotation.NewKeySig)
+	tamperedRotation.NewKeySig[0] ^= 0xff
+
+	err = VerifyNewAuthDigest(tamperedRotation)
+	if err == nil {
+		t.Fatalf("Expected error when verifying tampered key signature, got nil")
+	}
+}
+
+// TestDefineMonotonicCounterIdempotent verifies that calling
+// DefineMonotonicCounter twice on the same handle succeeds and returns the
+// same value both times (no spurious increment on the second call).
+func TestDefineMonotonicCounterIdempotent(t *testing.T) {
+	counter1, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	counter2, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("Expected no error on second call, got  \"%v\"", err)
+	}
+
+	if counter1 != counter2 {
+		t.Fatalf("Expected same counter value on second call, got %d != %d", counter1, counter2)
+	}
+}
+
+// TestDefineMonotonicCounterWrongNVType verifies that DefineMonotonicCounter
+// refuses to use an existing NV index whose type is not a counter.
+func TestDefineMonotonicCounterWrongNVType(t *testing.T) {
+	const wrongTypeHandle = uint32(0x1500018)
+
+	key, _ := genTpmKeyPairECC()
+	authorizationDigest, err := GenerateAuthDigest(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	// plant an ordinary NV index at the handle.
+	err = SealSecret(wrongTypeHandle, authorizationDigest, []byte("dummy"))
+	if err != nil {
+		t.Fatalf("Expected no error from SealSecret, got  \"%v\"", err)
+	}
+
+	_, err = DefineMonotonicCounter(wrongTypeHandle)
+	if err == nil {
+		t.Fatalf("Expected error when defining counter on ordinary NV handle, got nil")
+	}
+}
+
+// TestRotateAuthDigestWithPolicyKeyTypeMismatch verifies that passing keys of
+// different types (RSA old, ECC new) is rejected.
+func TestRotateAuthDigestWithPolicyKeyTypeMismatch(t *testing.T) {
+	oldKey, _ := genTpmKeyPairRSA()
+	newKey, _ := genTpmKeyPairECC()
+
+	pcrs, err := readPCRs(PCR_INDEXES, AlgoSHA256)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
+	_, _, err = RotateAuthDigestWithPolicy(oldKey, newKey, pcrs, RBP{})
+	if err == nil {
+		t.Fatalf("Expected error for key type mismatch, got nil")
+	}
+}
+
+// TestUnsealSecretNonExistentHandle verifies that unsealing a handle that was
+// never defined returns an error rather than panicking or producing a
+// misleading result.
+func TestUnsealSecretNonExistentHandle(t *testing.T) {
+	key, _ := genTpmKeyPairRSA()
+
+	const nonExistentHandle = uint32(0x1500099)
+	sp := SignedPolicy{
+		Digest: bytes.Repeat([]byte{0x01}, 32),
+		Sig:    &PolicySignature{RSASignature: bytes.Repeat([]byte{0x01}, 32)},
+	}
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+
+	_, err := UnsealSecret(nonExistentHandle, &key.PublicKey, sp, sel, RBP{})
+	if err == nil {
+		t.Fatalf("Expected error for non-existent handle, got nil")
 	}
 }
