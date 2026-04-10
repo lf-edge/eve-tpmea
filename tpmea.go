@@ -5,8 +5,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -599,13 +599,13 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 }
 
 func hashPublicKey(publicKey crypto.PublicKey) ([]byte, error) {
-	message, err := json.Marshal(publicKey)
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		return nil, err
 	}
 
 	sh := crypto.SHA256.New()
-	sh.Write(message)
+	sh.Write(der)
 	return sh.Sum(nil), nil
 }
 
@@ -622,7 +622,7 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 	switch p := oldPrivateKey.(type) {
 	case *rsa.PrivateKey:
 		newRSAPrivateKey, _ := newPrivateKey.(*rsa.PrivateKey)
-		newRSAPublicKeyHash, err := hashPublicKey(newRSAPrivateKey.PublicKey)
+		newRSAPublicKeyHash, err := hashPublicKey(&newRSAPrivateKey.PublicKey)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -633,7 +633,7 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 		}
 	case *ecdsa.PrivateKey:
 		newECCPrivateKey, _ := newPrivateKey.(*ecdsa.PrivateKey)
-		newECCPublicKeyHash, err := hashPublicKey(newECCPrivateKey.PublicKey)
+		newECCPublicKeyHash, err := hashPublicKey(&newECCPrivateKey.PublicKey)
 		if err != nil {
 			return nil, nil, err
 		}
