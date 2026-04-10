@@ -29,10 +29,34 @@ const (
 	AlgoSHA512 = PCRHashAlgo(3)
 )
 
+// PolicySignature holds the raw signature bytes produced by GenerateSignedPolicy.
 type PolicySignature struct {
 	RSASignature  []byte
 	ECCSignatureR []byte
 	ECCSignatureS []byte
+}
+
+// SignedPolicy bundles the policy digest with the signature over it.
+type SignedPolicy struct {
+	Digest []byte
+	Sig    *PolicySignature
+}
+
+// PCRSelection identifies which PCR banks and indices to check at unseal
+// time. It does not carry expected digest values; those are encoded in the
+// policy digest inside SignedPolicy.
+type PCRSelection struct {
+	Algo    PCRHashAlgo
+	Indexes []int
+}
+
+// KeyRotation carries everything produced by RotateAuthDigestWithPolicy
+// that the device side needs to verify and apply a key transition.
+type KeyRotation struct {
+	OldPublicKey  crypto.PublicKey
+	NewPublicKey  crypto.PublicKey
+	NewKeySig     []byte
+	NewAuthDigest tpm2.Digest
 }
 
 type PCR struct {
@@ -135,8 +159,20 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
 
-func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature) (*tpm2.TkVerified, tpm2.ResourceContext, error) {
-	if policySig == nil {
+// extractPublicKey returns the public half of a private key.
+func extractPublicKey(priv crypto.PrivateKey) (crypto.PublicKey, error) {
+	switch p := priv.(type) {
+	case *rsa.PrivateKey:
+		return &p.PublicKey, nil
+	case *ecdsa.PrivateKey:
+		return &p.PublicKey, nil
+	default:
+		return nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
+	}
+}
+
+func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, sp SignedPolicy) (*tpm2.TkVerified, tpm2.ResourceContext, error) {
+	if sp.Sig == nil {
 		return nil, nil, fmt.Errorf("invalid parameter(s)")
 	}
 
@@ -153,7 +189,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 			Signature: &tpm2.SignatureU{
 				RSASSA: &tpm2.SignatureRSASSA{
 					Hash: tpm2.HashAlgorithmSHA256,
-					Sig:  policySig.RSASignature}}}
+					Sig:  sp.Sig.RSASignature}}}
 	case *ecdsa.PublicKey:
 		public, err = newExternalECCPub(p)
 		if err != nil {
@@ -164,8 +200,8 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 			Signature: &tpm2.SignatureU{
 				ECDSA: &tpm2.SignatureECDSA{
 					Hash:       tpm2.HashAlgorithmSHA256,
-					SignatureR: policySig.ECCSignatureR,
-					SignatureS: policySig.ECCSignatureS}}}
+					SignatureR: sp.Sig.ECCSignatureR,
+					SignatureS: sp.Sig.ECCSignatureS}}}
 	default:
 		return nil, nil, fmt.Errorf("invalid public key (neither RSA nor ECC)")
 	}
@@ -187,7 +223,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 	// approvedPolicy by itself is a digest, but approvedPolicySignature is a
 	// signature over digest of approvedPolicy (signature over digest of digest),
 	// so compute it first.
-	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, policy, nil)
+	approvedPolicyDigest, err := util.ComputePolicyAuthorizeDigest(tpm2.HashAlgorithmSHA256, sp.Digest, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,8 +238,8 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 	return ticket, keyCtx, nil
 }
 
-func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) (tpm2.SessionContext, error) {
-	ticket, keyCtx, err := verifyPolicySignature(tpm, publicKey, policy, policySig)
+func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, sp SignedPolicy, sel PCRSelection, rbp RBP) (tpm2.SessionContext, error) {
+	ticket, keyCtx, err := verifyPolicySignature(tpm, publicKey, sp)
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +267,8 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 			return nil, err
 		}
 
-		// if rbp is provide, first check the PolicyNV then PolicyPCR, in this
-		// case the two policy will from a logical AND (PolicyNV AND PolicyPCR).
+		// if rbp is provided, first check the PolicyNV then PolicyPCR, in this
+		// case the two policies form a logical AND (PolicyNV AND PolicyPCR).
 		operandB := make([]byte, 8)
 		binary.BigEndian.PutUint64(operandB, rbp.Check)
 		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, polss, operandB, 0, tpm2.OpUnsignedLE, nil)
@@ -241,11 +277,11 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 		}
 	}
 
-	pcrHashAlgo, err := getPCRAlgo(pcrAlgo)
+	pcrHashAlgo, err := getPCRAlgo(sel.Algo)
 	if err != nil {
 		return nil, err
 	}
-	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel.Indexes}}
 	err = tpm.PolicyPCR(polss, nil, pcrSelections)
 	if err != nil {
 		return nil, err
@@ -253,7 +289,7 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 
 	// authorize policy will check if policies hold at runtime (i.e PCR values
 	// match the expected value and counter holds true on the arithmetic op)
-	err = tpm.PolicyAuthorize(polss, policy, nil, keyCtx.Name(), ticket)
+	err = tpm.PolicyAuthorize(polss, sp.Digest, nil, keyCtx.Name(), ticket)
 	if err != nil {
 		return nil, err
 	}
@@ -417,12 +453,13 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	return tpm.NVWrite(tpm.OwnerHandleContext(), index, secret, 0, nil)
 }
 
-// UnsealSecret will read the secret from the TPM. To read the secret the
-// approvedPolicy and approvedPolicySignature must be provided.
-// If approvedPolicy is signed with the valid key and provided TPM states
-// matches the run-time state of the TPM, the secret is returned.
-func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) ([]byte, error) {
-	if publicKey == nil || policy == nil || policySig == nil {
+// UnsealSecret reads the secret from the TPM. The signed policy must have been
+// produced by GenerateSignedPolicy with a key whose public half matches publicKey.
+// Unsealing succeeds only if the signature is valid and the TPM's runtime state
+// (PCR values and, optionally, the rollback-protection counter) matches what was
+// encoded in the policy at signing time.
+func UnsealSecret(handle uint32, publicKey crypto.PublicKey, sp SignedPolicy, sel PCRSelection, rbp RBP) ([]byte, error) {
+	if publicKey == nil || sp.Sig == nil || sp.Digest == nil {
 		return nil, fmt.Errorf("invalid parameter(s)")
 	}
 
@@ -440,7 +477,7 @@ func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, poli
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, pcrAlgo, rbp)
+	polss, err := authorizeObject(tpm, publicKey, sp, sel, rbp)
 	if err != nil {
 		return nil, err
 	}
@@ -457,8 +494,8 @@ func UnsealSecret(handle uint32, publicKey crypto.PublicKey, policy []byte, poli
 
 // ActivateReadLock prevents further reading of the data from provided index,
 // this restriction will gets deactivated on next tpm reset or restart.
-func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) error {
-	if publicKey == nil || policy == nil || policySig == nil {
+func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, sp SignedPolicy, sel PCRSelection, rbp RBP) error {
+	if publicKey == nil || sp.Sig == nil || sp.Digest == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
@@ -476,7 +513,7 @@ func ActivateReadLock(handle uint32, publicKey crypto.PublicKey, policy []byte, 
 
 	// perform the TPM commands in order, this will work only if policy signature
 	// is valid and session digest matches the auth (saved) digest of the object.
-	polss, err := authorizeObject(tpm, publicKey, policy, policySig, pcrs, pcrAlgo, rbp)
+	polss, err := authorizeObject(tpm, publicKey, sp, sel, rbp)
 	if err != nil {
 		return err
 	}
@@ -543,27 +580,25 @@ func GenerateAuthDigest(publicKey crypto.PublicKey) (authDigest tpm2.Digest, err
 	return tpm.PolicyGetDigest(triss)
 }
 
-// GenerateSignedPolicy will compute the digest of PolicyNV and PolicyPCR and
-// signs it using the provided key. It will return the approvedPolicy which
-// represent the run-time state that the target TPM should match (i.e PCR values),
-// and approvedPolicySignature which is the signature of the approvedPolicy that gets
-// validated on the target TPM to match the key which is used to generate
-// authorizationDigest from the call to GenerateAuthDigest.
+// GenerateSignedPolicy computes a policy digest that encodes the expected
+// runtime state (PCR values and, optionally, a rollback-protection counter
+// bound) and signs it with the provided private key. The returned SignedPolicy
+// must be passed verbatim to UnsealSecret or ActivateReadLock.
 //
-// The private key must be belong to the pair that is used with GenerateAuthDigest.
+// The private key must belong to the pair used with GenerateAuthDigest.
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side (attester, Challenger, etc).
-func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (policy []byte, policySig *PolicySignature, err error) {
+func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (SignedPolicy, error) {
 	if privateKey == nil {
-		return nil, nil, fmt.Errorf("invalid parameter(s)")
+		return SignedPolicy{}, fmt.Errorf("invalid parameter(s)")
 	}
 
 	tpm, err := getTpmHandle()
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 	defer tpm.Close()
 
@@ -573,14 +608,14 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 	// commands are PolicyNV and PolicyPCR.
 	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 	defer tpm.FlushContext(triss)
 
 	if rbp != (RBP{}) {
 		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
 		if err != nil {
-			return nil, nil, err
+			return SignedPolicy{}, err
 		}
 
 		// PolicyNV : index value <= operandB
@@ -588,7 +623,7 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		binary.BigEndian.PutUint64(operandB, rbp.Check)
 		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, triss, operandB, 0, tpm2.OpUnsignedLE, nil)
 		if err != nil {
-			return nil, nil, err
+			return SignedPolicy{}, err
 		}
 	}
 
@@ -601,25 +636,25 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 
 	pcrHashAlgo, err := getPCRAlgo(pcrList.Algo)
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel}}
 	pcrValues := tpm2.PCRValues{pcrHashAlgo: digests}
 	pcrDigests, err := policyutil.ComputePCRDigest(pcrHashAlgo, pcrSelections, pcrValues)
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 
 	// PolicyPCR: runtime PCRs == pcrList
 	err = tpm.PolicyPCR(triss, pcrDigests, pcrSelections)
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 
 	// get the final session digest from TPM.
 	policyDigest, err := tpm.PolicyGetDigest(triss)
 	if err != nil {
-		return nil, nil, err
+		return SignedPolicy{}, err
 	}
 
 	switch p := privateKey.(type) {
@@ -634,9 +669,9 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// naming on the go-tpm2.
 		_, s, err := util.PolicyAuthorize(p, &scheme, policyDigest, nil)
 		if err != nil {
-			return nil, nil, err
+			return SignedPolicy{}, err
 		}
-		return policyDigest, &PolicySignature{RSASignature: s.Signature.RSASSA.Sig}, nil
+		return SignedPolicy{Digest: policyDigest, Sig: &PolicySignature{RSASignature: s.Signature.RSASSA.Sig}}, nil
 	case *ecdsa.PrivateKey:
 		scheme := tpm2.SigScheme{
 			Scheme: tpm2.SigSchemeAlgECDSA,
@@ -648,11 +683,11 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// naming on the go-tpm2.
 		_, s, err := util.PolicyAuthorize(p, &scheme, policyDigest, nil)
 		if err != nil {
-			return nil, nil, err
+			return SignedPolicy{}, err
 		}
-		return policyDigest, &PolicySignature{ECCSignatureR: s.Signature.ECDSA.SignatureR, ECCSignatureS: s.Signature.ECDSA.SignatureS}, nil
+		return SignedPolicy{Digest: policyDigest, Sig: &PolicySignature{ECCSignatureR: s.Signature.ECDSA.SignatureR, ECCSignatureS: s.Signature.ECDSA.SignatureS}}, nil
 	default:
-		return nil, nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
+		return SignedPolicy{}, fmt.Errorf("invalid private key (neither RSA nor ECC)")
 	}
 }
 
@@ -748,98 +783,114 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 	return signature, digest, nil
 }
 
-// RotateAuthDigestWithPolicy will first signs the new auth public key using
-// the old one and generates a new Authorization Digest using the new auth key,
-// then signs the policy using new key.
+// RotateAuthDigestWithPolicy signs the new auth public key with the old private
+// key, derives a new Authorization Digest bound to the new key, and signs a
+// fresh policy with the new key. The returned KeyRotation carries everything
+// the device needs to apply the transition; the returned SignedPolicy is the
+// first policy valid under the new key.
 //
 // It is not necessary to run this function on a real TPM, running it on a
 // true-to-spec emulator like swtpm will work.
 //
 // This function should be called in the server side  (attester, Challenger, etc).
-func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (newKeySig []byte, newAuthDigest tpm2.Digest, newPolicy []byte, policyNewSig *PolicySignature, err error) {
+func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (KeyRotation, SignedPolicy, error) {
 	if oldPrivateKey == nil || newPrivateKey == nil {
-		return nil, nil, nil, nil, fmt.Errorf("invalid parameter(s)")
+		return KeyRotation{}, SignedPolicy{}, fmt.Errorf("invalid parameter(s)")
 	}
 
 	if reflect.TypeOf(oldPrivateKey) != reflect.TypeOf(newPrivateKey) {
-		return nil, nil, nil, nil, fmt.Errorf("both old and new public keys have to be of same type")
+		return KeyRotation{}, SignedPolicy{}, fmt.Errorf("both old and new private keys have to be of same type")
 	}
 
-	newKeySig, newAuthDigest, err = rotateAuthDigestKeyWithKeySigning(oldPrivateKey, newPrivateKey)
+	oldPub, err := extractPublicKey(oldPrivateKey)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return KeyRotation{}, SignedPolicy{}, err
 	}
 
-	newPolicy, policyNewSig, err = GenerateSignedPolicy(newPrivateKey, pcrList, rbp)
+	newPub, err := extractPublicKey(newPrivateKey)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return KeyRotation{}, SignedPolicy{}, err
 	}
 
-	return newKeySig, newAuthDigest, newPolicy, policyNewSig, nil
+	newKeySig, newAuthDigest, err := rotateAuthDigestKeyWithKeySigning(oldPrivateKey, newPrivateKey)
+	if err != nil {
+		return KeyRotation{}, SignedPolicy{}, err
+	}
+
+	sp, err := GenerateSignedPolicy(newPrivateKey, pcrList, rbp)
+	if err != nil {
+		return KeyRotation{}, SignedPolicy{}, err
+	}
+
+	rotation := KeyRotation{
+		OldPublicKey:  oldPub,
+		NewPublicKey:  newPub,
+		NewKeySig:     newKeySig,
+		NewAuthDigest: newAuthDigest,
+	}
+	return rotation, sp, nil
 }
 
-// VerifyNewAuthDigest verifies that the new key signed by the old key,
-// this is needed when the target TPM is doing a Authorization Digest rotation
-// using a new key.
-func VerifyNewAuthDigest(oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte) error {
-	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil {
+// VerifyNewAuthDigest verifies that the new public key was signed by the old
+// key. Call this on the device before applying a key rotation.
+func VerifyNewAuthDigest(rotation KeyRotation) error {
+	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
-	if reflect.TypeOf(oldPublicKey) != reflect.TypeOf(newPublicKey) {
+	if reflect.TypeOf(rotation.OldPublicKey) != reflect.TypeOf(rotation.NewPublicKey) {
 		return fmt.Errorf("both old and new public keys have to be of same type")
 	}
 
-	newPublicKeyHash, err := hashPublicKey(newPublicKey)
+	newPublicKeyHash, err := hashPublicKey(rotation.NewPublicKey)
 	if err != nil {
 		return err
 	}
 
-	switch p := oldPublicKey.(type) {
+	switch p := rotation.OldPublicKey.(type) {
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(p, crypto.SHA256, newPublicKeyHash, newKeySig)
+		return rsa.VerifyPKCS1v15(p, crypto.SHA256, newPublicKeyHash, rotation.NewKeySig)
 	case *ecdsa.PublicKey:
-		ok := ecdsa.VerifyASN1(p, newPublicKeyHash, newKeySig)
+		ok := ecdsa.VerifyASN1(p, newPublicKeyHash, rotation.NewKeySig)
 		if !ok {
 			return fmt.Errorf("invalid new key signature")
 		}
 		return nil
 	default:
-		return fmt.Errorf("invalid private key (neither RSA nor ECC)")
+		return fmt.Errorf("invalid public key (neither RSA nor ECC)")
 	}
 }
 
-// SealSecretWithVerifiedAuthDigest will first validates the new key
-// by calling VerifyNewAuthDigest, then reseals the secret using the new
-// Authorization Digest that is bound to the new key, meaning subsequent unseal
-// operations require policies that are signed with the new key.
-func SealSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, secret []byte) error {
-	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil || newAuthDigest == nil || secret == nil {
+// SealSecretWithVerifiedAuthDigest verifies the key rotation then reseals the
+// secret under the new Authorization Digest. Subsequent unseal operations will
+// require policies signed with the new key.
+func SealSecretWithVerifiedAuthDigest(handle uint32, rotation KeyRotation, secret []byte) error {
+	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil || rotation.NewAuthDigest == nil || secret == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
-	err := VerifyNewAuthDigest(oldPublicKey, newPublicKey, newKeySig)
+	err := VerifyNewAuthDigest(rotation)
 	if err != nil {
 		return err
 	}
 
-	return SealSecret(handle, newAuthDigest, secret)
+	return SealSecret(handle, rotation.NewAuthDigest, secret)
 }
 
-// ResealTpmSecretWithVerifiedAuthDigest unseals the secret using old key and policies,
-// then validation and key resealing using ResealSecretWithNewAuthDigestWithSecret.
-// check out ResealSecretWithNewAuthDigestWithSecret for more information.
-func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, oldPublicKey crypto.PublicKey, newPublicKey crypto.PublicKey, newKeySig []byte, newAuthDigest tpm2.Digest, policy []byte, policySig *PolicySignature, pcrs []int, pcrAlgo PCRHashAlgo, rbp RBP) error {
-	if oldPublicKey == nil || newPublicKey == nil || newKeySig == nil || newAuthDigest == nil || policy == nil || policySig == nil {
+// ResealTpmSecretWithVerifiedAuthDigest unseals the secret with the old key,
+// verifies the key rotation, then reseals the secret under the new
+// Authorization Digest.
+func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, rotation KeyRotation, sp SignedPolicy, sel PCRSelection, rbp RBP) error {
+	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil || rotation.NewAuthDigest == nil || sp.Sig == nil || sp.Digest == nil {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
-	secret, err := UnsealSecret(handle, oldPublicKey, policy, policySig, pcrs, pcrAlgo, rbp)
+	secret, err := UnsealSecret(handle, rotation.OldPublicKey, sp, sel, rbp)
 	if err != nil {
 		return err
 	}
 
-	return SealSecretWithVerifiedAuthDigest(handle, oldPublicKey, newPublicKey, newKeySig, newAuthDigest, secret)
+	return SealSecretWithVerifiedAuthDigest(handle, rotation, secret)
 }
 
 func ReadNVAuthDigest(handle uint32) ([]byte, error) {

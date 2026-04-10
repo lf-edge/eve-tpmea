@@ -281,7 +281,7 @@ func testSimpleSealUnseal(t *testing.T, privateKey crypto.PrivateKey, publicKey 
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -292,13 +292,8 @@ func testSimpleSealUnseal(t *testing.T, privateKey crypto.PrivateKey, publicKey 
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err := UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	readSecret, err := UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -345,7 +340,7 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -356,13 +351,8 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err := UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	readSecret, err := UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -384,13 +374,7 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 	}
 
 	// this must fail due to PCR mismatch
-	_, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	_, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
 			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
@@ -405,18 +389,12 @@ func testMutablePolicySealUnseal(t *testing.T, privateKey crypto.PrivateKey, pub
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err = GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	sp, err = GenerateSignedPolicy(privateKey, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	readSecret, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -468,7 +446,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err := GenerateSignedPolicy(privateKey, pcrsList, rbp)
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -479,13 +457,8 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err := UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	readSecret, err := UnsealSecret(NV_INDEX, publicKey, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -507,13 +480,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 	}
 
 	// this must fail due to PCR mismatch
-	_, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	_, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
 			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
@@ -528,18 +495,12 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err = GenerateSignedPolicy(privateKey, pcrsList, rbp)
+	sp, err = GenerateSignedPolicy(privateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	readSecret, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -555,13 +516,7 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 	}
 
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
-	_, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	_, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
 			t.Fatalf("Expected TPM_RC_POLICY error, got  \"%v\"", err)
@@ -572,18 +527,12 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 
 	// update the policy and try again
 	rbp.Check = rbpCounter
-	policy, policySig, err = GenerateSignedPolicy(privateKey, pcrsList, rbp)
+	sp, err = GenerateSignedPolicy(privateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	readSecret, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -596,16 +545,21 @@ func testMutablePolicySealUnsealWithRollbackProtection(t *testing.T, privateKey 
 func TestMutablePolicySealUnsealWithKeyRotationRSA(t *testing.T) {
 	oldKey, _ := genTpmKeyPairRSA()
 	newKey, _ := genTpmKeyPairRSA()
-	testMutablePolicySealUnsealWithKeyRotation(t, oldKey, &oldKey.PublicKey, newKey, &newKey.PublicKey)
+	testMutablePolicySealUnsealWithKeyRotation(t, oldKey, newKey)
 }
 
 func TestMutablePolicySealUnsealWithKeyRotationECC(t *testing.T) {
 	oldKey, _ := genTpmKeyPairECC()
 	newKey, _ := genTpmKeyPairECC()
-	testMutablePolicySealUnsealWithKeyRotation(t, oldKey, &oldKey.PublicKey, newKey, &newKey.PublicKey)
+	testMutablePolicySealUnsealWithKeyRotation(t, oldKey, newKey)
 }
 
-func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey crypto.PrivateKey, oldPublicKey crypto.PublicKey, newPrivateKey crypto.PrivateKey, newPublicKey crypto.PublicKey) {
+func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey) {
+	oldPublicKey, err := extractPublicKey(oldPrivateKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got  \"%v\"", err)
+	}
+
 	authorizationDigest, err := GenerateAuthDigest(oldPublicKey)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
@@ -637,7 +591,9 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 	rbp := RBP{Counter: NV_COUNTER_INDEX, Check: rbpCounter}
-	policy, policySig, err := GenerateSignedPolicy(oldPrivateKey, pcrsList, rbp)
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+
+	sp, err := GenerateSignedPolicy(oldPrivateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -648,32 +604,17 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	newKeySig, newAuthDigest, newPolicy, policyNewSig, err := RotateAuthDigestWithPolicy(oldPrivateKey, newPrivateKey, pcrs, rbp)
+	rotation, newSP, err := RotateAuthDigestWithPolicy(oldPrivateKey, newPrivateKey, pcrs, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	err = ResealTpmSecretWithVerifiedAuthDigest(NV_INDEX,
-		oldPublicKey,
-		newPublicKey,
-		newKeySig,
-		newAuthDigest,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	err = ResealTpmSecretWithVerifiedAuthDigest(NV_INDEX, rotation, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err := UnsealSecret(NV_INDEX,
-		newPublicKey,
-		newPolicy,
-		policyNewSig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	readSecret, err := UnsealSecret(NV_INDEX, rotation.NewPublicKey, newSP, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -682,8 +623,8 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
-	// update the signature variable for subsequent uses
-	policySig = policyNewSig
+	// update sp for subsequent uses with the new key
+	sp = newSP
 
 	// randomly select and extend a PCR index
 	pick := PCR_INDEXES[rand.Intn(len(PCR_INDEXES))]
@@ -698,13 +639,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 	}
 
 	// this must fail due to PCR mismatch
-	_, err = UnsealSecret(NV_INDEX,
-		newPublicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	_, err = UnsealSecret(NV_INDEX, rotation.NewPublicKey, sp, sel, rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_VALUE") != true {
 			t.Fatalf("Expected TPM_RC_VALUE error, got  \"%v\"", err)
@@ -719,18 +654,12 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 	}
 	pcrsList = PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err = GenerateSignedPolicy(newPrivateKey, pcrsList, rbp)
+	sp, err = GenerateSignedPolicy(newPrivateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
-		newPublicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	readSecret, err = UnsealSecret(NV_INDEX, rotation.NewPublicKey, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -746,13 +675,7 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 	}
 
 	// this should fail because the counter arithmetic op (ULE) don't hold anymore
-	_, err = UnsealSecret(NV_INDEX,
-		newPublicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	_, err = UnsealSecret(NV_INDEX, rotation.NewPublicKey, sp, sel, rbp)
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_POLICY") != true {
 			t.Fatalf("Expected TPM_RC_POLICY error, got  \"%v\"", err)
@@ -763,18 +686,12 @@ func testMutablePolicySealUnsealWithKeyRotation(t *testing.T, oldPrivateKey cryp
 
 	// update the policy and try again
 	rbp.Check = rbpCounter
-	policy, policySig, err = GenerateSignedPolicy(newPrivateKey, pcrsList, rbp)
+	sp, err = GenerateSignedPolicy(newPrivateKey, pcrsList, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err = UnsealSecret(NV_INDEX,
-		newPublicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		rbp)
+	readSecret, err = UnsealSecret(NV_INDEX, rotation.NewPublicKey, sp, sel, rbp)
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -820,7 +737,7 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 	}
 	pcrsList := PCRList{Algo: AlgoSHA256, Pcrs: sealingPcrs}
 
-	policy, policySig, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
+	sp, err := GenerateSignedPolicy(privateKey, pcrsList, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -831,13 +748,8 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	readSecret, err := UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	sel := PCRSelection{Algo: AlgoSHA256, Indexes: PCR_INDEXES}
+	readSecret, err := UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
@@ -846,25 +758,12 @@ func testReadLocking(t *testing.T, privateKey crypto.PrivateKey, publicKey crypt
 		t.Fatalf("Expected %s, got %s", writtenSecret, readSecret)
 	}
 
-	err = ActivateReadLock(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
-
+	err = ActivateReadLock(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		t.Fatalf("Expected no error, got  \"%v\"", err)
 	}
 
-	_, err = UnsealSecret(NV_INDEX,
-		publicKey,
-		policy,
-		policySig,
-		PCR_INDEXES,
-		AlgoSHA256,
-		RBP{})
+	_, err = UnsealSecret(NV_INDEX, publicKey, sp, sel, RBP{})
 	if err != nil {
 		if strings.Contains(err.Error(), "TPM_RC_NV_LOCKED") != true {
 			t.Fatalf("Expected TPM_RC_NV_LOCKED error, got  \"%v\"", err)
