@@ -352,6 +352,14 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
+	if len(authDigest) == 0 {
+		return fmt.Errorf("authDigest must not be empty: an empty policy allows unauthorized access")
+	}
+
+	if len(secret) == 0 {
+		return fmt.Errorf("secret must not be empty")
+	}
+
 	if len(secret) > math.MaxUint16 {
 		return fmt.Errorf("secret too large: %d bytes exceeds TPM NV max of %d", len(secret), math.MaxUint16)
 	}
