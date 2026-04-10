@@ -560,7 +560,10 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// just computes digest of policyDigest and signs it with provided key, bad
 		// naming on the go-tpm2.
 		_, s, err := util.PolicyAuthorize(privateKey, &scheme, policyDigest, nil)
-		return policyDigest, &PolicySignature{RSASignature: s.Signature.RSASSA.Sig}, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return policyDigest, &PolicySignature{RSASignature: s.Signature.RSASSA.Sig}, nil
 	case *ecdsa.PrivateKey:
 		_ = p
 		scheme := tpm2.SigScheme{
@@ -572,7 +575,10 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// just computes digest of policyDigest and signs it with provided key, bad
 		// naming on the go-tpm2.
 		_, s, err := util.PolicyAuthorize(privateKey, &scheme, policyDigest, nil)
-		return policyDigest, &PolicySignature{ECCSignatureR: s.Signature.ECDSA.SignatureR, ECCSignatureS: s.Signature.ECDSA.SignatureS}, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return policyDigest, &PolicySignature{ECCSignatureR: s.Signature.ECDSA.SignatureR, ECCSignatureS: s.Signature.ECDSA.SignatureS}, nil
 	default:
 		return nil, nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
 	}
