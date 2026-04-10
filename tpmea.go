@@ -303,23 +303,12 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, sp Signed
 	return polss, nil
 }
 
-// DefineMonotonicCounter will define a monotonic NV counter at the given index,
-// function will initialize the counter and returns its current value.
-//
-// monotonic counters will retain their value and won't go away even if undefined,
-// because of this if the handle already exist and it's attributes matches what
-// we need, it will get initialized first if it is uninitialized, and then
-// its current value is returned.
-func DefineMonotonicCounter(handle uint32) (uint64, error) {
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return 0, err
-	}
-	defer tpm.Close()
-
+// defineMonotonicCounterOn ensures the NV counter at handle exists and is
+// initialized on the given tpm connection, returning its current value.
+func defineMonotonicCounterOn(tpm *tpm2.TPMContext, handle uint32) (uint64, error) {
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err == nil {
-		// probably handle already exists, read its attributes.
+		// handle already exists, read its attributes.
 		nvpub, _, err := tpm.NVReadPublic(index)
 		if err != nil {
 			return 0, err
@@ -347,7 +336,7 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 		return counter, nil
 	}
 
-	// handle doesn't exists, create it with desired attributes.
+	// handle doesn't exist, create it with desired attributes.
 	nvpub := tpm2.NVPublic{
 		Index:   tpm2.Handle(handle),
 		NameAlg: tpm2.HashAlgorithmSHA256,
@@ -365,6 +354,23 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 	}
 
 	return tpm.NVReadCounter(tpm.OwnerHandleContext(), index, nil)
+}
+
+// DefineMonotonicCounter will define a monotonic NV counter at the given index,
+// function will initialize the counter and returns its current value.
+//
+// monotonic counters will retain their value and won't go away even if undefined,
+// because of this if the handle already exist and it's attributes matches what
+// we need, it will get initialized first if it is uninitialized, and then
+// its current value is returned.
+func DefineMonotonicCounter(handle uint32) (uint64, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return 0, err
+	}
+	defer tpm.Close()
+
+	return defineMonotonicCounterOn(tpm, handle)
 }
 
 // IncreaseMonotonicCounter will increase the value of the monotonic counter at
@@ -618,6 +624,13 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 	defer tpm.FlushContext(triss)
 
 	if rbp != (RBP{}) {
+		// The trial session needs the NV index to exist on this TPM so it can
+		// compute the correct policy name. Create it on the same connection if
+		// it is not already present; value does not matter for name derivation.
+		if _, err := defineMonotonicCounterOn(tpm, rbp.Counter); err != nil {
+			return SignedPolicy{}, err
+		}
+
 		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
 		if err != nil {
 			return SignedPolicy{}, err
