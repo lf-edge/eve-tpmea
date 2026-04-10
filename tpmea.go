@@ -647,7 +647,10 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 	var signature []byte
 	switch p := oldPrivateKey.(type) {
 	case *rsa.PrivateKey:
-		newRSAPrivateKey, _ := newPrivateKey.(*rsa.PrivateKey)
+		newRSAPrivateKey, ok := newPrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("new key must be *rsa.PrivateKey")
+		}
 		newRSAPublicKeyHash, err := hashPublicKey(&newRSAPrivateKey.PublicKey)
 		if err != nil {
 			return nil, nil, err
@@ -658,7 +661,10 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 			return nil, nil, err
 		}
 	case *ecdsa.PrivateKey:
-		newECCPrivateKey, _ := newPrivateKey.(*ecdsa.PrivateKey)
+		newECCPrivateKey, ok := newPrivateKey.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("new key must be *ecdsa.PrivateKey")
+		}
 		newECCPublicKeyHash, err := hashPublicKey(&newECCPrivateKey.PublicKey)
 		if err != nil {
 			return nil, nil, err
