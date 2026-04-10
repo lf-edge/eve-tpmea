@@ -3,6 +3,7 @@ package tpmea
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -85,7 +86,25 @@ func zeroExtendBytes(x *big.Int, l int) (out []byte) {
 	return
 }
 
-func newExternalECCPub(key *ecdsa.PublicKey) tpm2.Public {
+func eccCurveID(curve elliptic.Curve) (tpm2.ECCCurve, error) {
+	switch curve {
+	case elliptic.P256():
+		return tpm2.ECCCurveNIST_P256, nil
+	case elliptic.P384():
+		return tpm2.ECCCurveNIST_P384, nil
+	case elliptic.P521():
+		return tpm2.ECCCurveNIST_P521, nil
+	default:
+		return 0, fmt.Errorf("unsupported ECC curve: %s", curve.Params().Name)
+	}
+}
+
+func newExternalECCPub(key *ecdsa.PublicKey) (tpm2.Public, error) {
+	curveID, err := eccCurveID(key.Curve)
+	if err != nil {
+		return tpm2.Public{}, err
+	}
+	coordSize := (key.Params().BitSize + 7) / 8
 	return tpm2.Public{
 		Type:    tpm2.ObjectTypeECC,
 		NameAlg: tpm2.HashAlgorithmSHA256,
@@ -94,12 +113,12 @@ func newExternalECCPub(key *ecdsa.PublicKey) tpm2.Public {
 			ECCDetail: &tpm2.ECCParams{
 				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
 				Scheme:    tpm2.ECCScheme{Scheme: tpm2.ECCSchemeNull},
-				CurveID:   tpm2.ECCCurveNIST_P256,
+				CurveID:   curveID,
 				KDF:       tpm2.KDFScheme{Scheme: tpm2.KDFAlgorithmNull}}},
 		Unique: &tpm2.PublicIDU{
 			ECC: &tpm2.ECCPoint{
-				X: zeroExtendBytes(key.X, key.Params().BitSize/8),
-				Y: zeroExtendBytes(key.Y, key.Params().BitSize/8)}}}
+				X: zeroExtendBytes(key.X, coordSize),
+				Y: zeroExtendBytes(key.Y, coordSize)}}}, nil
 }
 
 func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
@@ -120,6 +139,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 	var (
 		public    tpm2.Public
 		signature *tpm2.Signature
+		err       error
 	)
 	switch p := publicKey.(type) {
 	case *rsa.PublicKey:
@@ -131,7 +151,10 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 					Hash: tpm2.HashAlgorithmSHA256,
 					Sig:  policySig.RSASignature}}}
 	case *ecdsa.PublicKey:
-		public = newExternalECCPub(p)
+		public, err = newExternalECCPub(p)
+		if err != nil {
+			return nil, nil, err
+		}
 		signature = &tpm2.Signature{
 			SigAlg: tpm2.SigSchemeAlgECDSA,
 			Signature: &tpm2.SignatureU{
@@ -464,7 +487,10 @@ func GenerateAuthDigest(publicKey crypto.PublicKey) (authDigest tpm2.Digest, err
 	case *rsa.PublicKey:
 		public = newExternalRSAPub(p)
 	case *ecdsa.PublicKey:
-		public = newExternalECCPub(p)
+		public, err = newExternalECCPub(p)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
 	}
@@ -637,7 +663,10 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 		if err != nil {
 			return nil, nil, err
 		}
-		public = newExternalECCPub(&newECCPrivateKey.PublicKey)
+		public, err = newExternalECCPub(&newECCPrivateKey.PublicKey)
+		if err != nil {
+			return nil, nil, err
+		}
 		signature, err = ecdsa.SignASN1(rand.Reader, p, newECCPublicKeyHash)
 		if err != nil {
 			return nil, nil, err
