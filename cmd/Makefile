@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Zededa, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 REPO_ROOT = $(abspath ..)
 BUILD_DIR = bin
 SERVER    = $(BUILD_DIR)/tpmea-server

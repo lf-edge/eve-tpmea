@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Zededa, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 // server is a simple HTTP controller that holds a signing key and issues
 // authorization digests and signed policies for client devices. In a real
 // deployment this process would run on the attestation server, not on the

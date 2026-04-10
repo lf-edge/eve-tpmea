@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Zededa, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 // client runs a demo of the full seal/unseal lifecycle against the server.
 // Set SWTPM_PATH to the Unix socket of a software TPM before running.
 package main
