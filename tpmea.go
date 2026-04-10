@@ -292,7 +292,7 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 		return 0, err
 	}
 
-	return 1, nil
+	return tpm.NVReadCounter(tpm.OwnerHandleContext(), index, nil)
 }
 
 // IncreaseMonotonicCounter will increase the value of the monotonic counter at
