@@ -672,7 +672,7 @@ func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey c
 		return nil, nil, nil, fmt.Errorf("invalid parameter(s)")
 	}
 
-	if reflect.ValueOf(oldPrivateKey).Kind() != reflect.ValueOf(newPrivateKey).Kind() {
+	if reflect.TypeOf(oldPrivateKey) != reflect.TypeOf(newPrivateKey) {
 		return nil, nil, nil, fmt.Errorf("both old and new public keys have to be of same type")
 	}
 
@@ -697,7 +697,7 @@ func VerifyNewAuthDigest(oldPublicKey crypto.PublicKey, newPublicKey crypto.Publ
 		return fmt.Errorf("invalid parameter(s)")
 	}
 
-	if reflect.ValueOf(oldPublicKey).Kind() != reflect.ValueOf(newPublicKey).Kind() {
+	if reflect.TypeOf(oldPublicKey) != reflect.TypeOf(newPublicKey) {
 		return fmt.Errorf("both old and new public keys have to be of same type")
 	}
 
