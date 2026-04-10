@@ -52,18 +52,18 @@ type RBP struct {
 	Check   uint64
 }
 
-func getPCRAlgo(algo PCRHashAlgo) tpm2.HashAlgorithmId {
+func getPCRAlgo(algo PCRHashAlgo) (tpm2.HashAlgorithmId, error) {
 	switch algo {
 	case AlgoSHA1:
-		return tpm2.HashAlgorithmSHA1
+		return tpm2.HashAlgorithmSHA1, nil
 	case AlgoSHA256:
-		return tpm2.HashAlgorithmSHA256
+		return tpm2.HashAlgorithmSHA256, nil
 	case AlgoSHA384:
-		return tpm2.HashAlgorithmSHA384
+		return tpm2.HashAlgorithmSHA384, nil
 	case AlgoSHA512:
-		return tpm2.HashAlgorithmSHA512
+		return tpm2.HashAlgorithmSHA512, nil
 	default:
-		return tpm2.HashAlgorithmSHA256
+		return 0, fmt.Errorf("unsupported PCR hash algorithm: %d", algo)
 	}
 }
 
@@ -568,7 +568,10 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		digests[pcr.Index] = pcr.Digest
 	}
 
-	pcrHashAlgo := getPCRAlgo(pcrList.Algo)
+	pcrHashAlgo, err := getPCRAlgo(pcrList.Algo)
+	if err != nil {
+		return nil, nil, err
+	}
 	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: sel}}
 	pcrValues := tpm2.PCRValues{pcrHashAlgo: digests}
 	pcrDigests, err := policyutil.ComputePCRDigest(pcrHashAlgo, pcrSelections, pcrValues)

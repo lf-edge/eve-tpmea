@@ -99,8 +99,11 @@ func extendPCR(index int, algo PCRHashAlgo, data []byte) error {
 	}
 	defer tpm.Close()
 
-	pcrHashAlgo := getPCRAlgo(algo)
-	h := getPCRAlgo(algo).NewHash()
+	pcrHashAlgo, err := getPCRAlgo(algo)
+	if err != nil {
+		return err
+	}
+	h := pcrHashAlgo.NewHash()
 	h.Write(data)
 
 	digest := tpm2.TaggedHashList{tpm2.MakeTaggedHash(pcrHashAlgo, h.Sum(nil))}
@@ -132,7 +135,10 @@ func readPCRs(pcrs []int, algo PCRHashAlgo) (PCRList, error) {
 	}
 	defer tpm.Close()
 
-	pcrHashAlgo := getPCRAlgo(algo)
+	pcrHashAlgo, err := getPCRAlgo(algo)
+	if err != nil {
+		return PCRList{}, err
+	}
 	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: pcrs}}
 	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
 	if err != nil {
