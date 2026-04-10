@@ -103,6 +103,11 @@ var getTpmHandle = func() (*tpm2.TPMContext, error) {
 	return tpm2.OpenTPMDevice(rmDevice)
 }
 
+// SetTPMHandleFunc replaces the function used to open a TPM connection.
+func SetTPMHandleFunc(f func() (*tpm2.TPMContext, error)) {
+	getTpmHandle = f
+}
+
 func zeroExtendBytes(x *big.Int, l int) (out []byte) {
 	out = make([]byte, l)
 	tmp := x.Bytes()
@@ -891,6 +896,34 @@ func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, rotation KeyRotation, 
 	}
 
 	return SealSecretWithVerifiedAuthDigest(handle, rotation, secret)
+}
+
+// ReadPCRs reads the current values of the given PCR indexes from the
+// specified hash bank. The returned list preserves the original PCR indexes
+// so it can be passed directly to GenerateSignedPolicy.
+func ReadPCRs(indexes []int, algo PCRHashAlgo) (PCRList, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return PCRList{}, err
+	}
+	defer tpm.Close()
+
+	pcrHashAlgo, err := getPCRAlgo(algo)
+	if err != nil {
+		return PCRList{}, err
+	}
+
+	pcrSelections := tpm2.PCRSelectionList{{Hash: pcrHashAlgo, Select: indexes}}
+	_, pcrsValue, err := tpm.PCRRead(pcrSelections)
+	if err != nil {
+		return PCRList{}, err
+	}
+
+	pcrList := PCRList{Algo: algo, Pcrs: make(PCRS, 0, len(indexes))}
+	for i, val := range pcrsValue[pcrHashAlgo] {
+		pcrList.Pcrs = append(pcrList.Pcrs, PCR{Index: i, Digest: val})
+	}
+	return pcrList, nil
 }
 
 func ReadNVAuthDigest(handle uint32) ([]byte, error) {
