@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 
@@ -110,7 +111,7 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 			RSADetail: &tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
 				Scheme:    tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
-				KeyBits:   2048,
+				KeyBits:   uint16(key.N.BitLen()),
 				Exponent:  uint32(key.E)}},
 		Unique: &tpm2.PublicIDU{RSA: key.N.Bytes()}}
 }
@@ -252,9 +253,9 @@ func DefineMonotonicCounter(handle uint32) (uint64, error) {
 			return 0, err
 		}
 
-		// check if the attributes match what we need, is so, just use the handle.
+		// check if the type and attributes match what we need, if so, just use the handle.
 		attr := tpm2.AttrNVOwnerRead | tpm2.AttrNVOwnerWrite
-		if (nvpub.Attrs & attr) != attr {
+		if nvpub.Attrs.Type() != tpm2.NVTypeCounter || (nvpub.Attrs&attr) != attr {
 			return 0, errors.New("a counter at provide handle already exists with mismatched attributes")
 		}
 
@@ -326,6 +327,10 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	if authDigest == nil || secret == nil {
 		return fmt.Errorf("invalid parameter(s)")
+	}
+
+	if len(secret) > math.MaxUint16 {
+		return fmt.Errorf("secret too large: %d bytes exceeds TPM NV max of %d", len(secret), math.MaxUint16)
 	}
 
 	tpm, err := getTpmHandle()
