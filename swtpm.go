@@ -36,6 +36,15 @@ type swtpmSocketTCTI struct {
 	rsp  *bytes.Reader
 }
 
+const (
+	// tpmResponseMinSize is the smallest valid TPM response:
+	// tag (2) + size (4) + response code (4).
+	tpmResponseMinSize = 10
+	// tpmResponseMaxSize is a generous upper bound to prevent excessive
+	// allocation from a malformed or malicious size field.
+	tpmResponseMaxSize = 4 * 1024 * 1024 // 4 MiB
+)
+
 func (t *swtpmSocketTCTI) Read(data []byte) (int, error) {
 	if t.rsp == nil {
 		hdr := make([]byte, 6)
@@ -43,6 +52,12 @@ func (t *swtpmSocketTCTI) Read(data []byte) (int, error) {
 			return 0, err
 		}
 		responseSize := binary.BigEndian.Uint32(hdr[2:6])
+		if responseSize < tpmResponseMinSize {
+			return 0, fmt.Errorf("invalid TPM response size %d: too small", responseSize)
+		}
+		if responseSize > tpmResponseMaxSize {
+			return 0, fmt.Errorf("invalid TPM response size %d: too large", responseSize)
+		}
 		buf := make([]byte, responseSize)
 		copy(buf, hdr)
 		if _, err := io.ReadFull(t.conn, buf[6:]); err != nil {
