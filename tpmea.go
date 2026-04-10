@@ -167,7 +167,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 					SignatureR: policySig.ECCSignatureR,
 					SignatureS: policySig.ECCSignatureS}}}
 	default:
-		return nil, nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
+		return nil, nil, fmt.Errorf("invalid public key (neither RSA nor ECC)")
 	}
 
 	// null-hierarchy won't produce a valid ticket, go with owner
@@ -259,7 +259,7 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 }
 
 // DefineMonotonicCounter will define a monotonic NV counter at the given index,
-// function will initialize the counter and returns the its current value.
+// function will initialize the counter and returns its current value.
 //
 // monotonic counters will retain their value and won't go away even if undefined,
 // because of this if the handle already exist and it's attributes matches what
@@ -358,7 +358,7 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 }
 
 // SealSecret will write the provide secret to the TPM. The authDigest parameter
-// binds the unseal operation with a singed policy that must gold true at run-time.
+// binds the unseal operation with a signed policy that must hold true at run-time.
 func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	if authDigest == nil || secret == nil {
 		return fmt.Errorf("invalid parameter(s)")
@@ -512,7 +512,7 @@ func GenerateAuthDigest(publicKey crypto.PublicKey) (authDigest tpm2.Digest, err
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
+		return nil, fmt.Errorf("invalid public key (neither RSA nor ECC)")
 	}
 
 	// load the public key into TPM
@@ -613,7 +613,6 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 
 	switch p := privateKey.(type) {
 	case *rsa.PrivateKey:
-		_ = p
 		scheme := tpm2.SigScheme{
 			Scheme: tpm2.SigSchemeAlgRSASSA,
 			Details: &tpm2.SigSchemeU{
@@ -622,13 +621,12 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// util.PolicyAuthorize is not executing PolicyAuthorize TPM commands, it
 		// just computes digest of policyDigest and signs it with provided key, bad
 		// naming on the go-tpm2.
-		_, s, err := util.PolicyAuthorize(privateKey, &scheme, policyDigest, nil)
+		_, s, err := util.PolicyAuthorize(p, &scheme, policyDigest, nil)
 		if err != nil {
 			return nil, nil, err
 		}
 		return policyDigest, &PolicySignature{RSASignature: s.Signature.RSASSA.Sig}, nil
 	case *ecdsa.PrivateKey:
-		_ = p
 		scheme := tpm2.SigScheme{
 			Scheme: tpm2.SigSchemeAlgECDSA,
 			Details: &tpm2.SigSchemeU{
@@ -637,7 +635,7 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 		// util.PolicyAuthorize is not executing PolicyAuthorize TPM commands, it
 		// just computes digest of policyDigest and signs it with provided key, bad
 		// naming on the go-tpm2.
-		_, s, err := util.PolicyAuthorize(privateKey, &scheme, policyDigest, nil)
+		_, s, err := util.PolicyAuthorize(p, &scheme, policyDigest, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -730,7 +728,7 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 		return nil, nil, err
 	}
 
-	// retrieve it the session digest.
+	// retrieve the session digest.
 	digest, err := tpm.PolicyGetDigest(triss)
 	if err != nil {
 		return nil, nil, err
