@@ -136,6 +136,10 @@ func newExternalRSAPub(key *rsa.PublicKey) tpm2.Public {
 }
 
 func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []byte, policySig *PolicySignature) (*tpm2.TkVerified, tpm2.ResourceContext, error) {
+	if policySig == nil {
+		return nil, nil, fmt.Errorf("invalid parameter(s)")
+	}
+
 	var (
 		public    tpm2.Public
 		signature *tpm2.Signature
@@ -228,7 +232,7 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 		}
 
 		// if rbp is provide, first check the PolicyNV then PolicyPCR, in this
-		// case the two policy will from a logical AND (PolicyPCR AND PolicyPCR).
+		// case the two policy will from a logical AND (PolicyNV AND PolicyPCR).
 		operandB := make([]byte, 8)
 		binary.BigEndian.PutUint64(operandB, rbp.Check)
 		err = tpm.PolicyNV(tpm.OwnerHandleContext(), index, polss, operandB, 0, tpm2.OpUnsignedLE, nil)
@@ -330,6 +334,14 @@ func IncreaseMonotonicCounter(handle uint32) (uint64, error) {
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err != nil {
 		return 0, err
+	}
+
+	nvpub, _, err := tpm.NVReadPublic(index)
+	if err != nil {
+		return 0, err
+	}
+	if nvpub.Attrs.Type() != tpm2.NVTypeCounter {
+		return 0, fmt.Errorf("NV index 0x%x is not a monotonic counter", handle)
 	}
 
 	err = tpm.NVIncrement(tpm.OwnerHandleContext(), index, nil)
