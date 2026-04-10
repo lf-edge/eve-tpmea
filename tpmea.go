@@ -386,10 +386,17 @@ func SealSecret(handle uint32, authDigest []byte, secret []byte) error {
 	}
 	defer tpm.Close()
 
-	// ignore error from NewResourceContext, maybe handle doesn't exist,
-	// we catch other errors at NVDefineSpace anyways.
+	// if the handle already exists, verify it is an ordinary NV index before
+	// overwriting it.
 	index, err := tpm.NewResourceContext(tpm2.Handle(handle))
 	if err == nil {
+		nvpub, _, err := tpm.NVReadPublic(index)
+		if err != nil {
+			return err
+		}
+		if nvpub.Attrs.Type() != tpm2.NVTypeOrdinary {
+			return fmt.Errorf("NV index 0x%x exists but is not an ordinary NV index (type: %v)", handle, nvpub.Attrs.Type())
+		}
 		err = tpm.NVUndefineSpace(tpm.OwnerHandleContext(), index, nil)
 		if err != nil {
 			return err
