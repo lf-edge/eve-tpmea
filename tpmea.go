@@ -637,6 +637,8 @@ func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPriva
 		if err != nil {
 			return nil, nil, err
 		}
+	default:
+		return nil, nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
 	}
 
 	tpm, err := getTpmHandle()
