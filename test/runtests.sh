@@ -153,7 +153,7 @@ go test -v -coverprofile="coverage.txt" -covermode=atomic ./...
 RESULT=$?
 
 if [ "$RESULT" -ne 0 ]; then
-    echo "[!] Tests FAILED — swtpm log:"
+    echo "[!] Tests FAILED - swtpm log:"
     cat "$TPM_STATE/swtpm.log" 2>/dev/null || true
 fi
 

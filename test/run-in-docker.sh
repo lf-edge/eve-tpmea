@@ -45,8 +45,6 @@ EOF
 echo "[+] Running test/runtests.sh inside container ..."
 # The repo is mounted read-only and copied to a writable path so build
 # artefacts (coverage.txt, temp dirs) don't pollute the source tree.
-# swtpm runs in Unix socket mode inside the container, so no --privileged
-# or kernel modules are required.
 docker run --rm \
     --name eve-tpmea-test \
     -v "$REPO_ROOT:/eve-tpmea:ro" \

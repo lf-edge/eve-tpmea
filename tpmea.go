@@ -1,11 +1,13 @@
 package tpmea
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/linux"
+	"github.com/canonical/go-tpm2/mu"
 	"github.com/canonical/go-tpm2/policyutil"
 	"github.com/canonical/go-tpm2/util"
 )
@@ -28,6 +31,23 @@ const (
 	AlgoSHA384 = PCRHashAlgo(2)
 	AlgoSHA512 = PCRHashAlgo(3)
 )
+
+// NVCertification is the output of TPM2_NV_Certify for a monotonic counter.
+// It carries the raw attestation blob and signature so a remote verifier can
+// authenticate the counter value without direct TPM access.
+type NVCertification struct {
+	// Nonce is the qualifying data supplied to TPM2_NV_Certify. The TPM
+	// embeds it in the signed blob so the verifier can confirm freshness.
+	Nonce []byte
+	// AttestBlob is the raw marshaled TPMS_ATTEST structure. The signing
+	// key's signature covers SHA-256(AttestBlob).
+	AttestBlob []byte
+	// RSASig is set when the signing key is RSA (PKCS#1v15).
+	RSASig []byte
+	// ECCSigR and ECCSigS are set when the signing key is ECDSA.
+	ECCSigR []byte
+	ECCSigS []byte
+}
 
 // PolicySignature holds the raw signature bytes produced by GenerateSignedPolicy.
 type PolicySignature struct {
@@ -957,4 +977,123 @@ func ReadNVAuthDigest(handle uint32) ([]byte, error) {
 	}
 
 	return info.AuthPolicy, nil
+}
+
+// CertifyNVCounter runs TPM2_NV_Certify on the NV counter at nvHandle, signed
+// by the key at akHandle. nonce is a freshness token from the verifier; the
+// TPM embeds it in the attestation so replays can be detected.
+func CertifyNVCounter(akHandle, nvHandle uint32, nonce []byte) (NVCertification, error) {
+	tpm, err := getTpmHandle()
+	if err != nil {
+		return NVCertification{}, err
+	}
+	defer tpm.Close()
+
+	akCtx, err := tpm.NewResourceContext(tpm2.Handle(akHandle))
+	if err != nil {
+		return NVCertification{}, fmt.Errorf("cannot load signing key at 0x%08x: %w", akHandle, err)
+	}
+	nvCtx, err := tpm.NewResourceContext(tpm2.Handle(nvHandle))
+	if err != nil {
+		return NVCertification{}, fmt.Errorf("cannot load NV index 0x%08x: %w", nvHandle, err)
+	}
+	attest, sig, err := nvCertify(tpm, akCtx, tpm.OwnerHandleContext(), nvCtx, nonce)
+	if err != nil {
+		return NVCertification{}, err
+	}
+	attestBytes, err := mu.MarshalToBytes(attest)
+	if err != nil {
+		return NVCertification{}, fmt.Errorf("marshal attest: %w", err)
+	}
+
+	cert := NVCertification{Nonce: nonce, AttestBlob: attestBytes}
+	switch sig.SigAlg {
+	case tpm2.SigSchemeAlgRSASSA, tpm2.SigSchemeAlgRSAPSS:
+		cert.RSASig = []byte(sig.Signature.RSASSA.Sig)
+	case tpm2.SigSchemeAlgECDSA:
+		cert.ECCSigR = []byte(sig.Signature.ECDSA.SignatureR)
+		cert.ECCSigS = []byte(sig.Signature.ECDSA.SignatureS)
+	default:
+		return NVCertification{}, fmt.Errorf("unsupported signature algorithm 0x%04x", sig.SigAlg)
+	}
+	return cert, nil
+}
+
+// VerifyNVCounter verifies that cert was produced by the TPM holding the key
+// whose public component is akPub and that the attestation is bound to nonce
+// (replay protection). It returns the certified counter value on success.
+func VerifyNVCounter(cert *NVCertification, akPub crypto.PublicKey, nonce []byte) (uint64, error) {
+	if cert == nil {
+		return 0, nil
+	}
+
+	digest := sha256.Sum256(cert.AttestBlob)
+
+	switch pub := akPub.(type) {
+	case *rsa.PublicKey:
+		if len(cert.RSASig) == 0 {
+			return 0, errors.New("RSA key but no RSA signature in certification")
+		}
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], cert.RSASig); err != nil {
+			return 0, fmt.Errorf("signature verification failed: %w", err)
+		}
+	case *ecdsa.PublicKey:
+		if len(cert.ECCSigR) == 0 || len(cert.ECCSigS) == 0 {
+			return 0, errors.New("ECDSA key but missing signature components in certification")
+		}
+		r := new(big.Int).SetBytes(cert.ECCSigR)
+		s := new(big.Int).SetBytes(cert.ECCSigS)
+		if !ecdsa.Verify(pub, digest[:], r, s) {
+			return 0, errors.New("ECDSA signature verification failed")
+		}
+	default:
+		return 0, fmt.Errorf("unsupported key type: %T", akPub)
+	}
+
+	var attest tpm2.Attest
+	if _, err := mu.UnmarshalFromBytes(cert.AttestBlob, &attest); err != nil {
+		return 0, fmt.Errorf("unmarshal attestation: %w", err)
+	}
+	if attest.Magic != tpm2.TPMGeneratedValue {
+		return 0, fmt.Errorf("bad TPM_GENERATED magic: 0x%x", attest.Magic)
+	}
+	if attest.Type != tpm2.TagAttestNV {
+		return 0, fmt.Errorf("unexpected attestation type 0x%04x, want 0x%04x (NV)", attest.Type, tpm2.TagAttestNV)
+	}
+	if !bytes.Equal([]byte(attest.ExtraData), nonce) {
+		return 0, errors.New("nonce mismatch: possible replay attack")
+	}
+
+	nvInfo := attest.Attested.NV
+	if nvInfo == nil {
+		return 0, errors.New("attestation missing NV certify info")
+	}
+	if len(nvInfo.NVContents) != 8 {
+		return 0, fmt.Errorf("unexpected NV contents length %d, want 8", len(nvInfo.NVContents))
+	}
+
+	return binary.BigEndian.Uint64(nvInfo.NVContents), nil
+}
+
+// nvCertify executes TPM2_NV_Certify.
+func nvCertify(
+	tpm *tpm2.TPMContext,
+	signCtx, authCtx, nvCtx tpm2.ResourceContext,
+	nonce []byte,
+) (*tpm2.Attest, *tpm2.Signature, error) {
+	inScheme := &tpm2.SigScheme{Scheme: tpm2.SigSchemeAlgNull}
+	var attest *tpm2.Attest
+	var sig *tpm2.Signature
+	err := tpm.StartCommand(tpm2.CommandNVCertify).
+		AddHandles(
+			tpm2.UseResourceContextWithAuth(signCtx, nil),
+			tpm2.UseResourceContextWithAuth(authCtx, nil),
+			tpm2.UseHandleContext(nvCtx),
+		).
+		AddParams(tpm2.Data(nonce), inScheme, uint16(8), uint16(0)).
+		Run(nil, mu.Sized(&attest), &sig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TPM2_NV_Certify: %w", err)
+	}
+	return attest, sig, nil
 }

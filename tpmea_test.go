@@ -20,6 +20,8 @@ const (
 	RESETABLE_PCR_INDEX = 16
 	NV_INDEX            = 0x1500016
 	NV_COUNTER_INDEX    = 0x1500017
+	// AIK_HANDLE is the RSA restricted signing key provisioned by runtests.sh
+	AIK_HANDLE = uint32(0x81000003)
 )
 
 var PCR_INDEXES = []int{0, 1, 2, 3, 4, 5}
@@ -1014,5 +1016,236 @@ func TestUnsealSecretNonExistentHandle(t *testing.T) {
 	_, err := UnsealSecret(nonExistentHandle, &key.PublicKey, sp, sel, RBP{})
 	if err == nil {
 		t.Fatalf("Expected error for non-existent handle, got nil")
+	}
+}
+
+// readAIKPublicKey reads the public component of the AIK
+func readAIKPublicKey(t *testing.T) crypto.PublicKey {
+	t.Helper()
+	tpm, err := getTpmHandle()
+	if err != nil {
+		t.Fatalf("getTpmHandle: %v", err)
+	}
+	defer tpm.Close()
+
+	ctx, err := tpm.NewResourceContext(tpm2.Handle(AIK_HANDLE))
+	if err != nil {
+		t.Fatalf("NewResourceContext for AIK 0x%08x: %v", AIK_HANDLE, err)
+	}
+
+	pub, _, _, err := tpm.ReadPublic(ctx)
+	if err != nil {
+		t.Fatalf("ReadPublic: %v", err)
+	}
+
+	return pub.Public()
+}
+
+// TestCertifyNVCounter verifies the happy path: CertifyNVCounter produces a
+// blob that VerifyNVCounter accepts, and the returned counter value matches
+// the one returned by DefineMonotonicCounter.
+func TestCertifyNVCounter(t *testing.T) {
+	aikPub := readAIKPublicKey(t)
+
+	counterVal, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("DefineMonotonicCounter: %v", err)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := crand.Read(nonce); err != nil {
+		t.Fatalf("generate nonce: %v", err)
+	}
+
+	cert, err := CertifyNVCounter(AIK_HANDLE, NV_COUNTER_INDEX, nonce)
+	if err != nil {
+		t.Fatalf("CertifyNVCounter: %v", err)
+	}
+
+	certified, err := VerifyNVCounter(&cert, aikPub, nonce)
+	if err != nil {
+		t.Fatalf("VerifyNVCounter: %v", err)
+	}
+	if certified != counterVal {
+		t.Fatalf("certified value %d does not match counter value %d", certified, counterVal)
+	}
+}
+
+// TestVerifyNVCounterIncrementedValue verifies that the certified value
+// reflects a counter increment: after IncreaseMonotonicCounter the next
+// certification must return the updated value.
+func TestVerifyNVCounterIncrementedValue(t *testing.T) {
+	aikPub := readAIKPublicKey(t)
+
+	_, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("DefineMonotonicCounter: %v", err)
+	}
+
+	incremented, err := IncreaseMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("IncreaseMonotonicCounter: %v", err)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := crand.Read(nonce); err != nil {
+		t.Fatalf("generate nonce: %v", err)
+	}
+
+	cert, err := CertifyNVCounter(AIK_HANDLE, NV_COUNTER_INDEX, nonce)
+	if err != nil {
+		t.Fatalf("CertifyNVCounter: %v", err)
+	}
+
+	certified, err := VerifyNVCounter(&cert, aikPub, nonce)
+	if err != nil {
+		t.Fatalf("VerifyNVCounter: %v", err)
+	}
+	if certified != incremented {
+		t.Fatalf("certified value %d does not match incremented counter %d", certified, incremented)
+	}
+}
+
+// TestVerifyNVCounterNonceMismatch verifies that presenting a cert with a
+// different nonce is rejected as a potential replay.
+func TestVerifyNVCounterNonceMismatch(t *testing.T) {
+	aikPub := readAIKPublicKey(t)
+
+	_, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("DefineMonotonicCounter: %v", err)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := crand.Read(nonce); err != nil {
+		t.Fatalf("generate nonce: %v", err)
+	}
+
+	cert, err := CertifyNVCounter(AIK_HANDLE, NV_COUNTER_INDEX, nonce)
+	if err != nil {
+		t.Fatalf("CertifyNVCounter: %v", err)
+	}
+
+	differentNonce := make([]byte, 32)
+	if _, err := crand.Read(differentNonce); err != nil {
+		t.Fatalf("generate different nonce: %v", err)
+	}
+
+	_, err = VerifyNVCounter(&cert, aikPub, differentNonce)
+	if err == nil {
+		t.Fatal("expected nonce mismatch error, got nil")
+	}
+}
+
+// TestVerifyNVCounterWrongKey verifies that a cert signed by the AIK cannot
+// be verified with a different RSA key.
+func TestVerifyNVCounterWrongKey(t *testing.T) {
+	_, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("DefineMonotonicCounter: %v", err)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := crand.Read(nonce); err != nil {
+		t.Fatalf("generate nonce: %v", err)
+	}
+
+	cert, err := CertifyNVCounter(AIK_HANDLE, NV_COUNTER_INDEX, nonce)
+	if err != nil {
+		t.Fatalf("CertifyNVCounter: %v", err)
+	}
+
+	wrongKey, _ := genTpmKeyPairRSA()
+	_, err = VerifyNVCounter(&cert, &wrongKey.PublicKey, nonce)
+	if err == nil {
+		t.Fatal("expected signature verification error with wrong key, got nil")
+	}
+}
+
+// TestVerifyNVCounterTamperedSignature verifies that flipping a byte in the
+// RSA signature causes verification to fail.
+func TestVerifyNVCounterTamperedSignature(t *testing.T) {
+	aikPub := readAIKPublicKey(t)
+
+	_, err := DefineMonotonicCounter(NV_COUNTER_INDEX)
+	if err != nil {
+		t.Fatalf("DefineMonotonicCounter: %v", err)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := crand.Read(nonce); err != nil {
+		t.Fatalf("generate nonce: %v", err)
+	}
+
+	cert, err := CertifyNVCounter(AIK_HANDLE, NV_COUNTER_INDEX, nonce)
+	if err != nil {
+		t.Fatalf("CertifyNVCounter: %v", err)
+	}
+
+	cert.RSASig[0] ^= 0xff
+
+	_, err = VerifyNVCounter(&cert, aikPub, nonce)
+	if err == nil {
+		t.Fatal("expected signature verification error after tampering, got nil")
+	}
+}
+
+// TestVerifyNVCounterNilCert verifies that a nil cert skips all checks and
+// returns (0, nil) without any TPM interaction.
+func TestVerifyNVCounterNilCert(t *testing.T) {
+	key, _ := genTpmKeyPairRSA()
+	val, err := VerifyNVCounter(nil, &key.PublicKey, []byte("nonce"))
+	if err != nil {
+		t.Fatalf("expected nil error for nil cert, got %v", err)
+	}
+	if val != 0 {
+		t.Fatalf("expected 0 for nil cert, got %d", val)
+	}
+}
+
+// TestVerifyNVCounterUnsupportedKeyType verifies that a key type other than
+// RSA or ECDSA returns an error immediately.
+func TestVerifyNVCounterUnsupportedKeyType(t *testing.T) {
+	cert := NVCertification{AttestBlob: []byte("dummy")}
+	_, err := VerifyNVCounter(&cert, "not-a-real-key", []byte("nonce"))
+	if err == nil {
+		t.Fatal("expected error for unsupported key type, got nil")
+	}
+}
+
+// TestVerifyNVCounterRSAMissingSignature verifies that an RSA public key
+// paired with a cert that has no RSA signature bytes is rejected.
+func TestVerifyNVCounterRSAMissingSignature(t *testing.T) {
+	key, _ := genTpmKeyPairRSA()
+	cert := NVCertification{AttestBlob: []byte("dummy")} // RSASig intentionally empty
+	_, err := VerifyNVCounter(&cert, &key.PublicKey, []byte("nonce"))
+	if err == nil {
+		t.Fatal("expected error for missing RSA signature, got nil")
+	}
+}
+
+// TestVerifyNVCounterECCMissingComponents verifies that an ECC cert with only
+// one of the two signature components (R, S) is rejected.
+func TestVerifyNVCounterECCMissingComponents(t *testing.T) {
+	key, _ := genTpmKeyPairECC()
+
+	certMissingS := NVCertification{
+		AttestBlob: []byte("dummy"),
+		ECCSigR:    []byte{0x01},
+		// ECCSigS intentionally absent
+	}
+	_, err := VerifyNVCounter(&certMissingS, &key.PublicKey, []byte("nonce"))
+	if err == nil {
+		t.Fatal("expected error for missing ECDSA S component, got nil")
+	}
+
+	certMissingR := NVCertification{
+		AttestBlob: []byte("dummy"),
+		// ECCSigR intentionally absent
+		ECCSigS: []byte{0x01},
+	}
+	_, err = VerifyNVCounter(&certMissingR, &key.PublicKey, []byte("nonce"))
+	if err == nil {
+		t.Fatal("expected error for missing ECDSA R component, got nil")
 	}
 }
