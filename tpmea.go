@@ -18,10 +18,6 @@ import (
 	"github.com/canonical/go-tpm2/util"
 )
 
-const (
-	TpmDevicePath = "/dev/tpmrm0"
-)
-
 type PCRHashAlgo int
 
 const (
@@ -69,12 +65,16 @@ func getPCRAlgo(algo PCRHashAlgo) tpm2.HashAlgorithmId {
 	}
 }
 
-func getTpmHandle() (*tpm2.TPMContext, error) {
-	tcti, err := linux.OpenDevice(TpmDevicePath)
+var getTpmHandle = func() (*tpm2.TPMContext, error) {
+	device, err := linux.DefaultTPM2Device()
 	if err != nil {
 		return nil, err
 	}
-	return tpm2.NewTPMContext(tcti), nil
+	rmDevice, err := device.ResourceManagedDevice()
+	if err != nil {
+		return nil, err
+	}
+	return tpm2.OpenTPMDevice(rmDevice)
 }
 
 func zeroExtendBytes(x *big.Int, l int) (out []byte) {
@@ -180,6 +180,14 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 		return nil, err
 	}
 
+	// flush polss on any error; on success the caller takes ownership and flushes it.
+	success := false
+	defer func() {
+		if !success {
+			tpm.FlushContext(polss)
+		}
+	}()
+
 	if rbp != (RBP{}) {
 		index, err := tpm.NewResourceContext(tpm2.Handle(rbp.Counter))
 		if err != nil {
@@ -209,6 +217,7 @@ func authorizeObject(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, policy []
 		return nil, err
 	}
 
+	success = true
 	return polss, nil
 }
 
