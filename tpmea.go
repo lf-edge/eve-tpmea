@@ -1011,7 +1011,7 @@ func CertifyNVCounter(akHandle, nvHandle uint32, nonce []byte) (NVCertification,
 
 	cert := NVCertification{Nonce: nonce, AttestBlob: attestBytes}
 	switch sig.SigAlg {
-	case tpm2.SigSchemeAlgRSASSA, tpm2.SigSchemeAlgRSAPSS:
+	case tpm2.SigSchemeAlgRSASSA:
 		cert.RSASig = []byte(sig.Signature.RSASSA.Sig)
 	case tpm2.SigSchemeAlgECDSA:
 		cert.ECCSigR = []byte(sig.Signature.ECDSA.SignatureR)
