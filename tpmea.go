@@ -148,6 +148,14 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 		return nil, nil, err
 	}
 
+	// flush keyCtx on any error; on success the caller takes ownership and flushes it.
+	success := false
+	defer func() {
+		if !success {
+			tpm.FlushContext(keyCtx)
+		}
+	}()
+
 	// approvedPolicy by itself is a digest, but approvedPolicySignature is a
 	// signature over digest of approvedPolicy (signature over digest of digest),
 	// so compute it first.
@@ -162,6 +170,7 @@ func verifyPolicySignature(tpm *tpm2.TPMContext, publicKey crypto.PublicKey, pol
 		return nil, nil, err
 	}
 
+	success = true
 	return ticket, keyCtx, nil
 }
 
