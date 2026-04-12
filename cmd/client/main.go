@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Zededa, Inc.
 // SPDX-License-Identifier: Apache-2.0
-
+//
 // client runs a demo of the full seal/unseal lifecycle against the server.
 // Set SWTPM_PATH to the Unix socket of a software TPM before running.
 package main
@@ -24,16 +24,17 @@ import (
 const (
 	nvIndex        = uint32(0x1500016)
 	nvCounterIndex = uint32(0x1500017)
-	// aikHandle is the persistent handle where tpm2-tools provisioned the AIK.
-	aikHandle = uint32(0x81000003)
+	aikHandle      = uint32(0x81000003)
 )
 
+type client struct{ base string }
+
 // the PCR indexes we bind the policy to.
-var pcrIndexes = []int{0, 1, 2, 3, 4, 5}
+var pcrIndexes = []int{0, 1, 2, 3, 4}
 
 func main() {
 	serverURL := flag.String("server", "http://localhost:8765", "server base URL")
-	aikPub    := flag.String("aik-pub", "", "path to DER-encoded AIK public key file")
+	aikPub := flag.String("aik-pub", "", "path to DER-encoded AIK public key file")
 	flag.Parse()
 
 	if path := os.Getenv("SWTPM_PATH"); path != "" {
@@ -225,10 +226,6 @@ func main() {
 	log.Println("=== demo complete ===")
 }
 
-type client struct{ base string }
-
-// registerAIK reads the DER-encoded AIK public key from disk (exported by the
-// provisioning script via tpm2 readpublic) and registers it with the server.
 func (c *client) registerAIK(aikPubPath string) error {
 	der, err := os.ReadFile(aikPubPath)
 	if err != nil {
@@ -257,8 +254,6 @@ func (c *client) init() (authDigest []byte, publicKey crypto.PublicKey, err erro
 	return r.AuthDigest, pub, nil
 }
 
-// signPolicy sends a sign-policy request to the server and returns the signed
-// policy and the RBP the server actually bound into it.
 func (c *client) signPolicy(pcrList tpmea.PCRList, rbp tpmea.RBP, cert tpmea.NVCertification) (tpmea.SignedPolicy, tpmea.RBP, error) {
 	var resp api.SignPolicyResp
 	err := c.post("/api/sign-policy", api.SignPolicyReq{
@@ -273,7 +268,6 @@ func (c *client) signPolicy(pcrList tpmea.PCRList, rbp tpmea.RBP, cert tpmea.NVC
 	return fromAPISP(resp.SignedPolicy), newRBP, nil
 }
 
-// nonce fetches a fresh challenge nonce from the server.
 func (c *client) nonce() ([]byte, error) {
 	resp, err := http.Get(c.base + "/api/nonce")
 	if err != nil {

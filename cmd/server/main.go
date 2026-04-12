@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Zededa, Inc.
 // SPDX-License-Identifier: Apache-2.0
-
+//
 // server is a simple HTTP controller that holds a signing key and issues
-// authorization digests and signed policies for client devices. In a real
-// deployment this process would run on the attestation server, not on the
-// device itself.
+// authorization digests and signed policies for client devices.
 package main
 
 import (
@@ -40,7 +38,7 @@ type srv struct {
 }
 
 func main() {
-	addr    := flag.String("addr", ":8765", "listen address")
+	addr := flag.String("addr", ":8765", "listen address")
 	keyType := flag.String("key-type", "rsa", "signing key type: rsa or ecc")
 	flag.Parse()
 
@@ -61,18 +59,18 @@ func main() {
 	s := &srv{privateKey: priv, authDigest: authDigest}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/init",         s.handleInit)
+	mux.HandleFunc("/api/init", s.handleInit)
 	mux.HandleFunc("/api/register-aik", s.handleRegisterAIK)
-	mux.HandleFunc("/api/nonce",        s.handleNonce)
-	mux.HandleFunc("/api/sign-policy",  s.handleSignPolicy)
-	mux.HandleFunc("/api/rotate",       s.handleRotate)
+	mux.HandleFunc("/api/nonce", s.handleNonce)
+	mux.HandleFunc("/api/sign-policy", s.handleSignPolicy)
+	mux.HandleFunc("/api/rotate", s.handleRotate)
 
 	log.Printf("server listening on %s (key type: %s)", *addr, *keyType)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
 // handleInit returns the current authorization digest and public key so the
-// client can seal a secret for the first time.
+// client can seal a secret.
 func (s *srv) handleInit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -128,7 +126,7 @@ func (s *srv) handleRegisterAIK(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleNonce returns a fresh random nonce. The client must include this nonce
-// when certifying its NV counter so the server can confirm freshness.
+// when certifying its NV counter.
 func (s *srv) handleNonce(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -165,8 +163,8 @@ func (s *srv) handleSignPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.RLock()
-	priv     := s.privateKey
-	aikPub   := s.aikPub
+	priv := s.privateKey
+	aikPub := s.aikPub
 	issuedNonce := s.latestNonce
 	s.mu.RUnlock()
 
@@ -259,8 +257,6 @@ func (s *srv) handleRotate(w http.ResponseWriter, r *http.Request) {
 		SignedPolicy:    toAPISP(newSP),
 	})
 }
-
-// helpers
 
 func generateKey(keyType string) (crypto.PrivateKey, crypto.PublicKey, error) {
 	switch keyType {
