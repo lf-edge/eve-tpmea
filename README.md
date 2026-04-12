@@ -8,4 +8,6 @@ This strict policy comes with a problem: for example, during a system update som
 
 See the `cmd/` directory for a runnable client/server demo that exercises the full seal, unseal, counter attestation, key rotation, and read-lock lifecycle.
 
+Although this is a standalone and independent library, more usage examples can be found in the EVE PCR Prediction repository: https://github.com/zededa/evepcr/tree/main/cmd
+
 For more information read the documents on [usage](doc/USAGE.md) and [testing](doc/TESTING.md).
