@@ -63,7 +63,6 @@ func main() {
 	mux.HandleFunc("/api/register-aik", s.handleRegisterAIK)
 	mux.HandleFunc("/api/nonce", s.handleNonce)
 	mux.HandleFunc("/api/sign-policy", s.handleSignPolicy)
-	mux.HandleFunc("/api/rotate", s.handleRotate)
 
 	log.Printf("server listening on %s (key type: %s)", *addr, *keyType)
 	log.Fatal(http.ListenAndServe(*addr, mux))
@@ -202,62 +201,6 @@ func (s *srv) handleSignPolicy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRotate generates a new signing key of the same type, signs it with
-// the current key to establish a chain of trust, and returns the rotation
-// bundle along with a freshly signed policy. After this the server discards
-// the old key.
-func (s *srv) handleRotate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req api.RotateReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	s.mu.RLock()
-	newKey, err := generateSameTypeKey(s.privateKey)
-	s.mu.RUnlock()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	s.mu.Lock()
-	rotation, newSP, err := tpmea.RotateAuthDigestWithPolicy(
-		s.privateKey, newKey, fromAPIPCRList(req.PCRList), fromAPIRBP(req.RBP))
-	if err != nil {
-		s.mu.Unlock()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.privateKey = newKey
-	s.authDigest = rotation.NewAuthDigest
-	s.mu.Unlock()
-
-	oldDER, err := x509.MarshalPKIXPublicKey(rotation.OldPublicKey)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	newDER, err := x509.MarshalPKIXPublicKey(rotation.NewPublicKey)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	writeJSON(w, api.RotateResp{
-		OldPublicKeyDER: oldDER,
-		NewPublicKeyDER: newDER,
-		NewKeySig:       rotation.NewKeySig,
-		NewAuthDigest:   rotation.NewAuthDigest,
-		SignedPolicy:    toAPISP(newSP),
-	})
-}
-
 func generateKey(keyType string) (crypto.PrivateKey, crypto.PublicKey, error) {
 	switch keyType {
 	case "rsa":
@@ -274,17 +217,6 @@ func generateKey(keyType string) (crypto.PrivateKey, crypto.PublicKey, error) {
 		return k, &k.PublicKey, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown key type %q, want rsa or ecc", keyType)
-	}
-}
-
-func generateSameTypeKey(priv crypto.PrivateKey) (crypto.PrivateKey, error) {
-	switch priv.(type) {
-	case *ecdsa.PrivateKey:
-		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		return k, err
-	default:
-		k, err := rsa.GenerateKey(rand.Reader, 2048)
-		return k, err
 	}
 }
 

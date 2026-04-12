@@ -183,40 +183,12 @@ func main() {
 	must(err, "unseal with updated counter")
 	checkEqual(secret, readSecret, "unseal after counter update")
 
-	step("request key rotation from server")
-	rotation, rotateSP, err := c.rotate(pcrList, rbp)
-	must(err, "rotate key")
-	log.Println("  Passed")
-
-	step("verify the new key signature before applying rotation")
-	must(tpmea.VerifyNewAuthDigest(rotation), "verify new auth digest")
-	log.Println("  Passed")
-
-	step("reseal existing secret under the new auth digest")
-	must(tpmea.ResealTpmSecretWithVerifiedAuthDigest(nvIndex, rotation, sp, sel, rbp), "reseal")
-	log.Println("  Passed")
-
-	step("unseal with the new key")
-	readSecret, err = tpmea.UnsealSecret(nvIndex, rotation.NewPublicKey, rotateSP, sel, rbp)
-	must(err, "unseal with new key")
-	checkEqual(secret, readSecret, "unseal with new key")
-
-	step("seal a brand new secret under the rotated auth digest")
-	newSecret := []byte("SECOND_SECRET_AFTER_ROTATION")
-	must(tpmea.SealSecretWithVerifiedAuthDigest(nvIndex, rotation, newSecret), "seal with verified auth digest")
-	log.Println("  Passed")
-
-	step("unseal the new secret")
-	readSecret, err = tpmea.UnsealSecret(nvIndex, rotation.NewPublicKey, rotateSP, sel, rbp)
-	must(err, "unseal new secret")
-	checkEqual(newSecret, readSecret, "unseal new secret")
-
 	step("activate read lock on the NV index")
-	must(tpmea.ActivateReadLock(nvIndex, rotation.NewPublicKey, rotateSP, sel, rbp), "activate read lock")
+	must(tpmea.ActivateReadLock(nvIndex, publicKey, sp, sel, rbp), "activate read lock")
 	log.Println("  Passed")
 
 	step("unseal must fail after lock (until next TPM reset)")
-	_, err = tpmea.UnsealSecret(nvIndex, rotation.NewPublicKey, rotateSP, sel, rbp)
+	_, err = tpmea.UnsealSecret(nvIndex, publicKey, sp, sel, rbp)
 	if err == nil {
 		log.Fatal("expected error after read lock, got nil")
 	}
@@ -282,34 +254,6 @@ func (c *client) nonce() ([]byte, error) {
 		return nil, err
 	}
 	return r.Nonce, nil
-}
-
-func (c *client) rotate(pcrList tpmea.PCRList, rbp tpmea.RBP) (tpmea.KeyRotation, tpmea.SignedPolicy, error) {
-	var resp api.RotateResp
-	err := c.post("/api/rotate", api.RotateReq{
-		PCRList: toAPIPCRList(pcrList),
-		RBP:     toAPIRBP(rbp),
-	}, &resp)
-	if err != nil {
-		return tpmea.KeyRotation{}, tpmea.SignedPolicy{}, err
-	}
-
-	oldPub, err := x509.ParsePKIXPublicKey(resp.OldPublicKeyDER)
-	if err != nil {
-		return tpmea.KeyRotation{}, tpmea.SignedPolicy{}, fmt.Errorf("parse old public key: %w", err)
-	}
-	newPub, err := x509.ParsePKIXPublicKey(resp.NewPublicKeyDER)
-	if err != nil {
-		return tpmea.KeyRotation{}, tpmea.SignedPolicy{}, fmt.Errorf("parse new public key: %w", err)
-	}
-
-	rotation := tpmea.KeyRotation{
-		OldPublicKey:  oldPub,
-		NewPublicKey:  newPub,
-		NewKeySig:     resp.NewKeySig,
-		NewAuthDigest: resp.NewAuthDigest,
-	}
-	return rotation, fromAPISP(resp.SignedPolicy), nil
 }
 
 func (c *client) post(path string, body, result interface{}) error {

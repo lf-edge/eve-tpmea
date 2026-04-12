@@ -65,28 +65,6 @@ counter, err = IncreaseMonotonicCounter(0x1500017)
 
 The client must validate the signature inside `sp` using `key.PublicKey` before replacing any existing policy. After the update, the client can unseal the secret using the new policy that matches the updated system state.
 
-## Rotating the Signing Key
-
-To rotate the signing key you can either bring your own verification logic for the new public key and follow the same steps as in "Generating Mutable Policies", or use the old key to establish a signing chain (note: if a device loses contact with the controller and the old key is retired, there is no fallback). To use the signing chain approach, call `RotateAuthDigestWithPolicy` on the server side. It signs the new public key with the old private key, derives a new Authorization Digest bound to the new key, and signs a fresh policy with the new key:
-
-```go
-newKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-rotation, newSP, err := RotateAuthDigestWithPolicy(oldKey, newKey, pcrsList, rbp)
-```
-
-The server sends `rotation` and `newSP` to the client. On the client side, `ResealTpmSecretWithVerifiedAuthDigest` verifies that the new public key is signed by the old key, unseals the secret with the old key and current policy, then reseals it under the new Authorization Digest:
-
-```go
-sel := PCRSelection{Algo: AlgoSHA256, Indexes: []int{0, 1, 2}}
-err = ResealTpmSecretWithVerifiedAuthDigest(0x1500016, rotation, sp, sel, rbp)
-```
-
-If the operation succeeds, the old key can be discarded on both the server and client sides. Subsequent unseal operations use `rotation.NewPublicKey` and the new signed policy:
-
-```go
-readSecret, err := UnsealSecret(0x1500016, rotation.NewPublicKey, newSP, sel, rbp)
-```
-
 ## Read Locking
 
 If supported by the TPM chip, it is possible to block reading from an NV index at runtime. `ActivateReadLock` activates this restriction and prevents further reads from the given index until the next TPM reset or restart.

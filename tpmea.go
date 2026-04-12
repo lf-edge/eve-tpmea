@@ -8,16 +8,13 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 	"math/big"
-	"reflect"
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/linux"
@@ -71,15 +68,6 @@ type SignedPolicy struct {
 type PCRSelection struct {
 	Algo    PCRHashAlgo
 	Indexes []int
-}
-
-// KeyRotation carries everything produced by RotateAuthDigestWithPolicy
-// that the device side needs to verify and apply a key transition.
-type KeyRotation struct {
-	OldPublicKey  crypto.PublicKey
-	NewPublicKey  crypto.PublicKey
-	NewKeySig     []byte
-	NewAuthDigest tpm2.Digest
 }
 
 type PCR struct {
@@ -730,208 +718,6 @@ func GenerateSignedPolicy(privateKey crypto.PrivateKey, pcrList PCRList, rbp RBP
 	default:
 		return SignedPolicy{}, fmt.Errorf("invalid private key (neither RSA nor ECC)")
 	}
-}
-
-func hashPublicKey(publicKey crypto.PublicKey) ([]byte, error) {
-	der, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return nil, err
-	}
-
-	sh := crypto.SHA256.New()
-	sh.Write(der)
-	return sh.Sum(nil), nil
-}
-
-// rotateAuthDigestKeyWithKeySigning signs the new auth public key using the old one,
-// and generates a new Authorization Digest using the new auth key.
-//
-// It is not necessary to run this function on a real TPM, running it on a
-// true-to-spec emulator like swtpm will work.
-//
-// This function should be called in the server side  (attester, Challenger, etc).
-func rotateAuthDigestKeyWithKeySigning(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey) (newSignature []byte, newAuthDigest tpm2.Digest, err error) {
-	var public tpm2.Public
-	var signature []byte
-	switch p := oldPrivateKey.(type) {
-	case *rsa.PrivateKey:
-		newRSAPrivateKey, ok := newPrivateKey.(*rsa.PrivateKey)
-		if !ok {
-			return nil, nil, fmt.Errorf("new key must be *rsa.PrivateKey")
-		}
-		newRSAPublicKeyHash, err := hashPublicKey(&newRSAPrivateKey.PublicKey)
-		if err != nil {
-			return nil, nil, err
-		}
-		public = newExternalRSAPub(&newRSAPrivateKey.PublicKey)
-		signature, err = rsa.SignPKCS1v15(nil, p, crypto.SHA256, newRSAPublicKeyHash)
-		if err != nil {
-			return nil, nil, err
-		}
-	case *ecdsa.PrivateKey:
-		newECCPrivateKey, ok := newPrivateKey.(*ecdsa.PrivateKey)
-		if !ok {
-			return nil, nil, fmt.Errorf("new key must be *ecdsa.PrivateKey")
-		}
-		newECCPublicKeyHash, err := hashPublicKey(&newECCPrivateKey.PublicKey)
-		if err != nil {
-			return nil, nil, err
-		}
-		public, err = newExternalECCPub(&newECCPrivateKey.PublicKey)
-		if err != nil {
-			return nil, nil, err
-		}
-		signature, err = ecdsa.SignASN1(rand.Reader, p, newECCPublicKeyHash)
-		if err != nil {
-			return nil, nil, err
-		}
-	default:
-		return nil, nil, fmt.Errorf("invalid private key (neither RSA nor ECC)")
-	}
-
-	tpm, err := getTpmHandle()
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.Close()
-
-	keyCtx, err := tpm.LoadExternal(nil, &public, tpm2.HandleNull)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.FlushContext(keyCtx)
-
-	// we generate the auth digest in a trial session, no evaluation in TPM is
-	// required, we are only interested in the final session digest
-	triss, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeTrial, nil, tpm2.HashAlgorithmSHA256)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer tpm.FlushContext(triss)
-
-	// ask TPM to compute the session digest.
-	err = tpm.PolicyAuthorize(triss, nil, nil, keyCtx.Name(), nil)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// retrieve the session digest.
-	digest, err := tpm.PolicyGetDigest(triss)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return signature, digest, nil
-}
-
-// RotateAuthDigestWithPolicy signs the new auth public key with the old private
-// key, derives a new Authorization Digest bound to the new key, and signs a
-// fresh policy with the new key. The returned KeyRotation carries everything
-// the device needs to apply the transition; the returned SignedPolicy is the
-// first policy valid under the new key.
-//
-// It is not necessary to run this function on a real TPM, running it on a
-// true-to-spec emulator like swtpm will work.
-//
-// This function should be called in the server side  (attester, Challenger, etc).
-func RotateAuthDigestWithPolicy(oldPrivateKey crypto.PrivateKey, newPrivateKey crypto.PrivateKey, pcrList PCRList, rbp RBP) (KeyRotation, SignedPolicy, error) {
-	if oldPrivateKey == nil || newPrivateKey == nil {
-		return KeyRotation{}, SignedPolicy{}, fmt.Errorf("invalid parameter(s)")
-	}
-
-	if reflect.TypeOf(oldPrivateKey) != reflect.TypeOf(newPrivateKey) {
-		return KeyRotation{}, SignedPolicy{}, fmt.Errorf("both old and new private keys have to be of same type")
-	}
-
-	oldPub, err := extractPublicKey(oldPrivateKey)
-	if err != nil {
-		return KeyRotation{}, SignedPolicy{}, err
-	}
-
-	newPub, err := extractPublicKey(newPrivateKey)
-	if err != nil {
-		return KeyRotation{}, SignedPolicy{}, err
-	}
-
-	newKeySig, newAuthDigest, err := rotateAuthDigestKeyWithKeySigning(oldPrivateKey, newPrivateKey)
-	if err != nil {
-		return KeyRotation{}, SignedPolicy{}, err
-	}
-
-	sp, err := GenerateSignedPolicy(newPrivateKey, pcrList, rbp)
-	if err != nil {
-		return KeyRotation{}, SignedPolicy{}, err
-	}
-
-	rotation := KeyRotation{
-		OldPublicKey:  oldPub,
-		NewPublicKey:  newPub,
-		NewKeySig:     newKeySig,
-		NewAuthDigest: newAuthDigest,
-	}
-	return rotation, sp, nil
-}
-
-// VerifyNewAuthDigest verifies that the new public key was signed by the old
-// key. Call this on the device before applying a key rotation.
-func VerifyNewAuthDigest(rotation KeyRotation) error {
-	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil {
-		return fmt.Errorf("invalid parameter(s)")
-	}
-
-	if reflect.TypeOf(rotation.OldPublicKey) != reflect.TypeOf(rotation.NewPublicKey) {
-		return fmt.Errorf("both old and new public keys have to be of same type")
-	}
-
-	newPublicKeyHash, err := hashPublicKey(rotation.NewPublicKey)
-	if err != nil {
-		return err
-	}
-
-	switch p := rotation.OldPublicKey.(type) {
-	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(p, crypto.SHA256, newPublicKeyHash, rotation.NewKeySig)
-	case *ecdsa.PublicKey:
-		ok := ecdsa.VerifyASN1(p, newPublicKeyHash, rotation.NewKeySig)
-		if !ok {
-			return fmt.Errorf("invalid new key signature")
-		}
-		return nil
-	default:
-		return fmt.Errorf("invalid public key (neither RSA nor ECC)")
-	}
-}
-
-// SealSecretWithVerifiedAuthDigest verifies the key rotation then reseals the
-// secret under the new Authorization Digest. Subsequent unseal operations will
-// require policies signed with the new key.
-func SealSecretWithVerifiedAuthDigest(handle uint32, rotation KeyRotation, secret []byte) error {
-	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil || rotation.NewAuthDigest == nil || secret == nil {
-		return fmt.Errorf("invalid parameter(s)")
-	}
-
-	err := VerifyNewAuthDigest(rotation)
-	if err != nil {
-		return err
-	}
-
-	return SealSecret(handle, rotation.NewAuthDigest, secret)
-}
-
-// ResealTpmSecretWithVerifiedAuthDigest unseals the secret with the old key,
-// verifies the key rotation, then reseals the secret under the new
-// Authorization Digest.
-func ResealTpmSecretWithVerifiedAuthDigest(handle uint32, rotation KeyRotation, sp SignedPolicy, sel PCRSelection, rbp RBP) error {
-	if rotation.OldPublicKey == nil || rotation.NewPublicKey == nil || rotation.NewKeySig == nil || rotation.NewAuthDigest == nil || sp.Sig == nil || sp.Digest == nil {
-		return fmt.Errorf("invalid parameter(s)")
-	}
-
-	secret, err := UnsealSecret(handle, rotation.OldPublicKey, sp, sel, rbp)
-	if err != nil {
-		return err
-	}
-
-	return SealSecretWithVerifiedAuthDigest(handle, rotation, secret)
 }
 
 // ReadPCRs reads the current values of the given PCR indexes from the

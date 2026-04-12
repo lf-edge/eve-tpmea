@@ -82,18 +82,3 @@ type SignPolicyResp struct {
 	NewRBP       RBP          `json:"newRbp"`
 }
 
-// RotateReq is the body sent to POST /api/rotate.
-type RotateReq struct {
-	PCRList PCRList `json:"pcrList"`
-	RBP     RBP     `json:"rbp"`
-}
-
-// RotateResp is returned by POST /api/rotate. The client must verify the
-// new key signature before applying it.
-type RotateResp struct {
-	OldPublicKeyDER []byte       `json:"oldPublicKeyDer"`
-	NewPublicKeyDER []byte       `json:"newPublicKeyDer"`
-	NewKeySig       []byte       `json:"newKeySig"`
-	NewAuthDigest   []byte       `json:"newAuthDigest"`
-	SignedPolicy    SignedPolicy `json:"signedPolicy"`
-}
